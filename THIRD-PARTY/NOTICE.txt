@@ -1,0 +1,4 @@
+AbracaDABra: Petr Kopecky, MIT; not bundled. https://github.com/KejPi/AbracaDABra
+Runtime: CPython (PSF), Tcl/Tk, Pillow (MIT-CMU), PyInstaller bootloader (GPL with distribution exception). See bundled notices.
+DAB+ artwork source: https://www.dabplus.de/ ; brand rights remain with their holders.
+Radio station logos are downloaded at runtime and not bundled.

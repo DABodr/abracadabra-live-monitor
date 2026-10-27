@@ -1,0 +1,27 @@
+{
+  "e1f7a9.0": {
+    "url": "https://www.radio-graffiti.com",
+    "label": "Radio Graffiti's",
+    "reference": "https://www.laradiodab.fr/grand-est/reims/"
+  },
+  "e1f7b2.0": {
+    "url": "https://www.radiomaunau.net",
+    "label": "Radio Mau-Nau",
+    "reference": "https://www.laradiodab.fr/grand-est/reims/"
+  },
+  "e1f7c1.0": {
+    "url": "https://www.bullefm.fr",
+    "label": "Bulle FM",
+    "reference": "https://www.laradiodab.fr/grand-est/reims/"
+  },
+  "e1f7f8.0": {
+    "url": "https://www.rvm.fr",
+    "label": "RVM Reims",
+    "reference": "https://www.laradiodab.fr/grand-est/reims/"
+  },
+  "e1f835.0": {
+    "url": "https://virginradio.fr/",
+    "label": "Virgin Radio",
+    "reference": "https://www.laradiodab.fr/grand-est/reims/"
+  }
+}

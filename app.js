@@ -4,13 +4,14 @@ const audio = $('audio');
 let radio = {}, scan = {active:false}, library = {multiplexes:[]}, channels = [], gain = {}, busy = false;
 let wantedAudio = false, serviceSignature = '', librarySignature = '', slideKey = '', toastTimer, lastLibraryLoad = 0;
 let remoteScanSeen = false, recoveryPending = false;
+let interruptedPlayback=false, interruptionResumeBusy=false, interruptionAttempts=0;
 let stationLogos = {}, lastLogoLoad = 0;
 let artworkRetryAt = 0;
 let favorites=[];
 try{const saved=JSON.parse(localStorage.getItem('dab-favorites-v1')||'[]');if(Array.isArray(saved))favorites=saved.filter(s=>s&&typeof s.sid==='string'&&Number.isInteger(s.frequencyKHz)&&typeof s.label==='string');}catch{}
 let favoriteSignature='';
 let mosaicSignature='', mosaicExpanded=false, mosaicNativeFullscreen=false;
-let manualHistory=[],manualFrequency=null,manualStationsSignature='';
+let manualHistory=[],manualFrequency=null,manualStationsSignature='',manualDetailFrequency=null;
 function renderManual(){
  const active=radio.frequencyKHz,stamp=Date.now();
  if(manualFrequency!==active||scan.active){manualFrequency=active;manualHistory=[];}
@@ -27,10 +28,17 @@ function renderManual(){
  for(const tile of $('manualChannels').children){
   const frequency=Number(tile.dataset.frequency),live=frequency===active&&!scan.active;
   const saved=library.multiplexes.filter(m=>m.frequencyKHz===frequency).sort((a,b)=>b.lastSeen.localeCompare(a.lastSeen))[0];
-  tile.classList.toggle('selected',live);tile.setAttribute('aria-pressed',String(live));tile.disabled=busy||scan.active;
-  tile.querySelector('.tile-mux').textContent=live?(radio.syncLevel===2&&radio.ensemble?.valid?radio.ensemble.label:'Recherche…'):saved?.label||'Non mémorisé';
-  tile.querySelector('.tile-snr').textContent=live?'SNR '+number(radio.snr,' dB')+' · direct':saved?'SNR '+number(saved.snr,' dB')+' · mémorisé':'—';
+  const received=live?radio.syncLevel===2&&radio.ensemble?.valid:!!saved;
+  const snr=live?radio.snr:saved?.snr;
+  tile.classList.toggle('selected',live);tile.classList.toggle('received',!!received);
+  tile.classList.toggle('inspected',frequency===manualDetailFrequency);
+  tile.setAttribute('aria-expanded',String(frequency===manualDetailFrequency));
+  tile.style.setProperty('--bar-height',Math.max(4,Math.min(100,(Number(snr)||0)/30*100))+'%');
+  tile.querySelector('.bar-value').textContent=typeof snr==='number'?number(snr,''): '\u2014';
+  tile.setAttribute('aria-label',tile.dataset.channel+' : '+(received?(live?radio.ensemble.label:saved.label):'Pas de multiplex re\u00e7u')+', SNR '+number(snr,' dB')+(live?' en direct':' m\u00e9moris\u00e9')+'. Afficher les informations');
+
  }
+ renderManualDetails();
  const sig=JSON.stringify([active,scan.active,radio.services,stationLogos]);
  if(sig!==manualStationsSignature){manualStationsSignature=sig;$('manualStations').replaceChildren(...(scan.active?[]:radio.services||[]).map(s=>stationButton(s,active)));}
 }
@@ -98,6 +106,14 @@ function renderFavorites(){
  $('favoritesEmpty').hidden=favorites.length>0;updateFavoriteStars();highlightStations();updateControls();
 }
 let mediaMetadataSignature = '';
+let bluetoothCompat=false;
+try{bluetoothCompat=localStorage.getItem('dab-bluetooth-compat')==='1';}catch{}
+$('bluetoothCompat').checked=bluetoothCompat;
+$('bluetoothCompat').onchange=()=>{
+ bluetoothCompat=$('bluetoothCompat').checked;
+ try{localStorage.setItem('dab-bluetooth-compat',bluetoothCompat?'1':'0');}catch{}
+ mediaMetadataSignature='';updateMediaMetadata();
+};
 let lockScreenArtwork = [], lockScreenStation = '';
 function updateMediaMetadata(){
  if(!('mediaSession' in navigator)||typeof MediaMetadata==='undefined')return;
@@ -112,14 +128,36 @@ function updateMediaMetadata(){
  if(station!==lockScreenStation||!cur.slideVersion){lockScreenArtwork=[];lockScreenStation=station;}
  // Only broadcast SLS images belong on the lock screen. Keep the previous
  // slide during loading of its successor, avoiding a transient empty artwork.
- if(img&&!img.hidden&&img.complete&&img.naturalWidth>0&&img.getAttribute('src')?.startsWith('/api/slideshow?')){
-  lockScreenArtwork=[{src:new URL(img.getAttribute('src'),location.href).href,sizes:img.naturalWidth+'x'+img.naturalHeight}];
+ if(img&&!img.hidden&&img.complete&&img.naturalWidth>0&&img.dataset.broadcastSlide==='true'){
+  lockScreenArtwork=[{src:new URL(img.dataset.broadcastUrl||img.getAttribute('src'),location.href).href,sizes:img.naturalWidth+'x'+img.naturalHeight}];
  }
  const artwork=lockScreenArtwork;
  const receptionInfo=[radio.syncLevel===2&&radio.ensemble?.valid?radio.ensemble.label:'',radio.channel?'Canal '+radio.channel:'',typeof radio.snr==='number'&&Number.isFinite(radio.snr)?'SNR '+radio.snr.toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1})+' dB':''].filter(Boolean).join(' · ');
- const metadata={title:cur.dlPlusTitle||cur.dls||cur.label,artist:cur.dlPlusArtist||cur.label,album:receptionInfo,artwork};
+ const normalTitle=cur.dlPlusTitle||cur.dls||cur.label;
+ const btSnr=typeof radio.snr==='number'&&Number.isFinite(radio.snr)?'SNR '+radio.snr.toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1})+' dB':'';
+ const trackTitle=cur.dlPlusTitle?[cur.dlPlusTitle,cur.dlPlusArtist].filter(Boolean).join(' \u2014 '):normalTitle;
+ const btTitle=bluetoothCompat?[trackTitle,btSnr].filter(Boolean).join(' \u00b7 '):normalTitle;
+ const metadata={title:btTitle,artist:bluetoothCompat?cur.label:cur.dlPlusArtist||cur.label,album:receptionInfo,artwork};
  const signature=JSON.stringify(metadata);
- if(signature!==mediaMetadataSignature){navigator.mediaSession.metadata=new MediaMetadata(metadata);mediaMetadataSignature=signature;}
+ if(signature!==mediaMetadataSignature){
+  try{
+   const session=navigator.mediaSession,existing=session.metadata;
+   // Notify individual field changes without rebuilding artwork on each SNR update.
+   if(existing){
+    if(existing.title!==metadata.title)existing.title=metadata.title;
+    if(existing.artist!==metadata.artist)existing.artist=metadata.artist;
+    if(existing.album!==metadata.album)existing.album=metadata.album;
+    if(JSON.stringify(existing.artwork)!==JSON.stringify(artwork)){
+     try{existing.artwork=artwork;}catch{existing.artwork=[];}
+    }
+   }else{
+    try{session.metadata=new MediaMetadata(metadata);}
+    catch{session.metadata=new MediaMetadata({...metadata,artwork:[]});}
+   }
+   mediaMetadataSignature=signature;
+  }catch{/* Retry on the next receiver update without interrupting playback. */}
+ }
+
 }
 audio.volume = .8;
 
@@ -216,21 +254,27 @@ function playerUI(){
  $('heroPlay').textContent=playing?'Mettre en pause  Ⅱ':'Écouter le direct  ▶';
  const reception=[radio.syncLevel===2&&radio.ensemble?.valid?radio.ensemble.label:'',radio.channel?'Canal '+radio.channel:'',typeof radio.snr==='number'&&Number.isFinite(radio.snr)?'SNR '+radio.snr.toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1})+' dB':''].filter(Boolean).join(' · ');
  const playerDetail=scan.active?scanReceptionInfo():busy?'Changement de station…':playing&&audio.readyState<2?'Chargement du direct…':!playing&&wantedAudio?'Reconnexion au direct…':reception||'Appuie sur Lecture pour écouter';
- text('playerStatus',playerDetail);$('playerStatus').title=playerDetail;
- text('expandedReception',playerDetail);
+ for(const id of ['playerStatus','expandedReception']){
+  const node=$(id),match=/SNR\s+-?\d+(?:[,.]\d+)?\s*dB/.exec(playerDetail);
+  if(match){
+   const value=element('span','player-snr',match[0]);value.dataset.quality=$('snrQuality').dataset.quality||'unknown';
+   node.replaceChildren(document.createTextNode(playerDetail.slice(0,match.index)),value,document.createTextNode(playerDetail.slice(match.index+match[0].length)));
+  }else node.textContent=playerDetail;
+ }
+ $('playerStatus').title=playerDetail;
  if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':'paused';
 }
 audio.addEventListener('playing',playerUI);audio.addEventListener('pause',playerUI);
-audio.addEventListener('error',()=>{playerUI();if(!scan.active&&!busy&&wantedAudio){wantedAudio=false;toast('Le flux a été interrompu. Appuie sur Lecture pour reprendre.');playerUI();}});
+audio.addEventListener('error',()=>{playerUI();if(interruptedPlayback)return;if(!scan.active&&!busy&&wantedAudio){wantedAudio=false;toast('Le flux a été interrompu. Appuie sur Lecture pour reprendre.');playerUI();}});
 async function playAudio(){
  if(scan.active||busy)return;
  if(!radio.current?.playing){toast('Choisis une station dans la liste ou dans Mes multiplex.');return;}
- wantedAudio=true;
+ interruptedPlayback=false;interruptionAttempts=0;wantedAudio=true;
  audio.src='/stream/audio?_='+Date.now();
  try {await audio.play();}catch(e){if(wantedAudio){wantedAudio=false;toast('Appuie à nouveau sur Lecture pour autoriser le son.');}}
  playerUI();
 }
-async function toggleAudio(){if(!audio.paused){wantedAudio=false;audio.pause();playerUI();}else await playAudio();}
+async function toggleAudio(){if(!audio.paused){wantedAudio=false;interruptedPlayback=false;audio.pause();playerUI();}else await playAudio();}
 $('playPause').onclick=toggleAudio;$('heroPlay').onclick=toggleAudio;
  $('expandedPlay').onclick=toggleAudio;
  $('expandedPrevious').onclick=()=>stepStation(-1);$('expandedNext').onclick=()=>stepStation(1);
@@ -257,9 +301,27 @@ async function stepStation(direction){
  }catch(e){toast(e.message);}
  finally{stationNavigationPending=false;}
 }
+async function playFromMediaControls(){
+ if(scan.active||busy)return;
+ // A Bluetooth play command is explicit consent to resume. Reuse the media
+ // element immediately, before any network request or stream replacement.
+ wantedAudio=true;interruptionAttempts=0;
+ try{
+  if(!audio.getAttribute('src')||audio.error||audio.ended){
+   if(!radio.current?.playing)return;
+   audio.src='/stream/audio?_='+Date.now();
+  }
+  await audio.play();
+  if(!wantedAudio){audio.pause();return;}
+  interruptedPlayback=false;
+ }catch{
+  interruptedPlayback=true;
+  // Keep intent so returning to Safari can retry if iOS blocks background play.
+ }finally{playerUI();}
+}
 function registerMediaControls(){
  if(!('mediaSession' in navigator))return;
- const handlers={play:playAudio,pause:()=>{wantedAudio=false;audio.pause();},previoustrack:()=>stepStation(-1),nexttrack:()=>stepStation(1),seekbackward:null,seekforward:null,seekto:null};
+ const handlers={play:playFromMediaControls,pause:()=>{wantedAudio=false;interruptedPlayback=false;audio.pause();},previoustrack:()=>stepStation(-1),nexttrack:()=>stepStation(1),seekbackward:null,seekforward:null,seekto:null};
  for(const [action,handler] of Object.entries(handlers)){
   try{navigator.mediaSession.setActionHandler(action,handler);}catch{/* Unsupported action on this browser. */}
  }
@@ -280,7 +342,7 @@ async function selectFirstManualStation(){
 async function selectStation(frequency, station, autoplay=true, alternatives=[]){
  if(busy||scan.active)return;
  pendingManualFrequency=null;
- busy=true;updateControls();wantedAudio=false;recoveryPending=false;audio.pause();
+ busy=true;updateControls();wantedAudio=false;interruptedPlayback=false;recoveryPending=false;audio.pause();
  audio.removeAttribute('src');audio.load();
  text('playerStatus','Réception de la station…');
  try {
@@ -354,23 +416,46 @@ function renderRadio(){
  const stationLogo=cur.playing?stationLogos[Number(cur.sid).toString(16)+'.'+(cur.scids||0)]:null;
  const slideId=cur.playing&&cur.slideVersion?radio.frequencyKHz+':'+cur.sid+':'+cur.slideVersion:'';
  const slideUrl=slideId?'/api/slideshow?v='+encodeURIComponent(slideId):'';
- const key=(slideId||'')+'|'+(stationLogo||'');
+ const artworkOwner=cur.playing?[radio.frequencyKHz,Number(cur.sid),Number(cur.scids||0)].join(':'):'';
+ const key=artworkOwner+'|'+(slideId||'')+'|'+(stationLogo||'');
  if(key!==slideKey||(artworkRetryAt&&Date.now()>=artworkRetryAt)){
   slideKey=key;artworkRetryAt=0;
-  for(const [imageId,placeholderId] of [['slide','artPlaceholder'],['playerSlide','playerArtPlaceholder'],['expandedSlide','expandedPlaceholder']]){
-   const img=$(imageId),placeholder=$(placeholderId);
-   img.hidden=true;placeholder.hidden=false;
-   let usingLogo=!slideUrl;
-   img.onload=()=>{if(slideKey===key){img.hidden=false;placeholder.hidden=true;updateMediaMetadata();}};
-   img.onerror=()=>{
-    if(slideKey!==key)return;
-    artworkRetryAt=Date.now()+10000;
-    if(!usingLogo&&stationLogo){usingLogo=true;img.alt='Logo de '+cur.label;img.src=stationLogo;}
-    else{img.hidden=true;placeholder.hidden=false;updateMediaMetadata();}
-   };
-   if(slideUrl||stationLogo){img.alt=(slideUrl?'Diaporama de ':'Logo de ')+(cur.label||'la station');img.src=slideUrl||stationLogo;}
-   else img.removeAttribute('src');
+  const targets=[['slide','artPlaceholder'],['playerSlide','playerArtPlaceholder'],['expandedSlide','expandedPlaceholder']].map(([i,p])=>[$(i),$(p)]);
+  for(const [img,placeholder] of targets){
+   if(img.dataset.artworkOwner!==artworkOwner||!artworkOwner){
+    img.hidden=true;img.removeAttribute('src');delete img.dataset.broadcastSlide;delete img.dataset.broadcastUrl;placeholder.hidden=false;
+    img.dataset.artworkOwner=artworkOwner;
+   }
   }
+  const hasArtwork=()=>targets.some(([img])=>!img.hidden&&img.hasAttribute('src'));
+  const loadArtwork=async(url,isSlide)=>{
+   const pending=new Image();
+   pending.onload=async()=>{
+    try{await pending.decode();}catch{}
+    if(slideKey!==key)return;
+    for(const [img,placeholder] of targets){
+     img.alt=(isSlide?'Diaporama de ':'Logo de ')+(cur.label||'la station');
+     img.dataset.broadcastSlide=String(isSlide);if(isSlide)img.dataset.broadcastUrl=url;else delete img.dataset.broadcastUrl;img.src=pending.src;img.hidden=false;placeholder.hidden=true;
+    }
+    updateMediaMetadata();
+   };
+   pending.onerror=()=>{
+    if(slideKey!==key)return;
+    artworkRetryAt=Date.now()+2000;
+    // Keep the current image through transient errors; never flash the fallback.
+    if(isSlide&&stationLogo&&!hasArtwork())loadArtwork(stationLogo,false);
+   };
+   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+   try{
+    const response=await fetch(url,{cache:'no-store',signal:controller.signal});
+    if(!response.ok)throw Error('Image indisponible');
+    const blob=await response.blob();
+    const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);});
+    if(slideKey===key)pending.src=dataUrl;
+   }catch{pending.onerror();}finally{clearTimeout(timeout);}
+
+  };
+  if(slideUrl||stationLogo)loadArtwork(slideUrl||stationLogo,!!slideUrl);
  }
  const services=scan.active?[]:(radio.services||[]);
  const signature=JSON.stringify([radio.frequencyKHz,services]);
@@ -557,7 +642,12 @@ async function init(){
  loadFavorites().catch(()=>{});
  try{
   const c=await api('/api/channels');channels=c.channels.filter(x=>x.frequencyKHz>=174928&&x.frequencyKHz<=239200);
-  $('manualChannels').replaceChildren(...channels.map(c=>{const b=element('button','channel-tile');b.dataset.frequency=c.frequencyKHz;b.append(element('strong','',c.channel),element('span','tile-mux','Non mémorisé'),element('small','tile-snr','—'));b.onclick=()=>selectStation(c.frequencyKHz);return b;}));
+  $('manualChannels').replaceChildren(...channels.map(c=>{
+   const b=element('button','manual-bar');b.type='button';b.dataset.frequency=c.frequencyKHz;b.dataset.channel=c.channel;b.setAttribute('aria-controls','manualDetails');
+   const track=element('span','manual-bar-track');track.setAttribute('aria-hidden','true');track.append(element('span','manual-bar-fill'));
+   b.append(element('small','bar-value','\u2014'),track,element('strong','',c.channel));
+   b.onclick=()=>{manualDetailFrequency=Number(c.frequencyKHz);renderManual();$('manualDetails').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'nearest'});};return b;
+  }));
   $('bandGrid').replaceChildren(...channels.map(c=>{const d=element('button','band-cell',c.channel);d.type='button';d.dataset.channel=c.channel;d.setAttribute('aria-controls','bandDetails');d.onclick=()=>{selectedBandChannel=selectedBandChannel===c.channel?null:c.channel;renderBand();};return d;}));
   gain=await api('/gain-control');$('rfAuto').checked=gain.automatic;$('rfGain').max=gain.gains.length-1;$('rfGain').value=gain.index;gainDisplay();
   await loadLogos();await loadLibrary();
@@ -580,13 +670,23 @@ function renderDeviceConnection(state){
  el.title=name+' \u00b7 '+status+(state?.deviceError ? ' : '+state.deviceError : '');
 }
 
+function mosaicNormalize(value){return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('fr').trim();}
+$('mosaicSearch').addEventListener('input',()=>renderMosaic());
 function renderMosaic(){
- const signature=JSON.stringify([library.multiplexes,stationLogos]);
+ // Reception timestamps and SNR change on tuning, but do not change the wall.
+ const mosaicData=library.multiplexes.map(m=>[m.frequencyKHz,m.ecc,m.eid,m.label,m.channel,(m.services||[]).map(s=>[s.sid,s.scids,s.label,s.labelShort,s.shortLabel])]);
+ const signature=JSON.stringify([mosaicData,stationLogos,$('mosaicSearch').value]);
  if(signature===mosaicSignature)return;
  mosaicSignature=signature;
  let count=0;
  const groups=groupMosaicStations().map(category=>{
-  const stations=category.stations;
+  const query=mosaicNormalize($('mosaicSearch').value).split(/\s+/).filter(Boolean);
+  const stations=category.stations.filter(entry=>{
+   const variants=library.multiplexes.filter(m=>(m.services||[]).some(s=>favoriteKey(s)===favoriteKey(entry.station)));
+   const country=entry.country==='unknown'?'':new Intl.DisplayNames(['fr'],{type:'region'}).of(entry.country);
+   const searchable=mosaicNormalize([entry.station.label,category.label,country,...variants.flatMap(m=>[m.label,m.channel,...m.services.filter(s=>favoriteKey(s)===favoriteKey(entry.station)).map(s=>s.label)])].join(' '));
+   return query.every(word=>searchable.includes(word));
+  });
   if(!stations.length)return null;
   const group=element('section','mosaic-group');group.dataset.id=category.id;
   const heading=element('h2','mosaic-group-title',category.label);group.append(heading);
@@ -607,7 +707,7 @@ function renderMosaic(){
   }
   group.append(grid);return group;
  }).filter(Boolean);
- $('mosaicGroups').replaceChildren(...groups);$('mosaicEmpty').hidden=count>0;
+ $('mosaicGroups').replaceChildren(...groups);const populated=library.multiplexes.some(m=>m.services?.length);$('mosaicEmpty').hidden=populated;$('mosaicNoResults').hidden=!populated||count>0;
  highlightStations();updateControls();
 }
 function updateMosaicPlayback(){
@@ -636,11 +736,13 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mosaicExpanded)setM
 function mosaicFrequencies(station){
  const key=favoriteKey(station);
  const matches=library.multiplexes.filter(m=>(m.services||[]).some(s=>favoriteKey(s)===key));
- const currentReceived=radio.syncLevel===2&&(radio.services||[]).some(s=>favoriteKey(s)===key);
+ const currentReceived=!scan.active&&radio.syncLevel===2&&(radio.services||[]).some(s=>favoriteKey(s)===key);
+ const isLive=m=>currentReceived&&Number(m.frequencyKHz)===Number(radio.frequencyKHz)&&Number(m.eid)===Number(radio.ensemble?.eid)&&Number(m.ecc)===Number(radio.ensemble?.ecc);
+ const score=m=>{const value=isLive(m)?radio.snr:m.snr;return typeof value==='number'&&Number.isFinite(value)?value:-Infinity;};
  matches.sort((a,b)=>{
-  const aLive=currentReceived&&Number(a.frequencyKHz)===Number(radio.frequencyKHz);
-  const bLive=currentReceived&&Number(b.frequencyKHz)===Number(radio.frequencyKHz);
-  return Number(bLive)-Number(aLive)||(Number(b.snr)||0)-(Number(a.snr)||0)||String(b.lastSeen||'').localeCompare(String(a.lastSeen||''));
+  const aScore=score(a),bScore=score(b);
+  if(aScore!==bScore)return bScore>aScore?1:-1;
+  return Number(isLive(b))-Number(isLive(a))||String(b.lastSeen||'').localeCompare(String(a.lastSeen||''));
  });
  return [...new Set(matches.map(m=>Number(m.frequencyKHz)))];
 }
@@ -686,7 +788,7 @@ function groupMosaicStations(){
 function bindLogoSearch(button,station){
  let timer,origin,suppress=false;
  const cancel=()=>{clearTimeout(timer);timer=null;};
- const open=()=>{cancel();suppress=true;openLogoSearch(station);};
+ const open=()=>{cancel();suppress=true;openLogoSearch(station,Number(button.dataset.frequency));};
  button.addEventListener('pointerdown',e=>{if(e.button!==0)return;suppress=false;origin=[e.clientX,e.clientY];timer=setTimeout(open,650);});
  button.addEventListener('pointermove',e=>{if(origin&&Math.hypot(e.clientX-origin[0],e.clientY-origin[1])>10)cancel();});
  for(const event of ['pointerup','pointercancel','pointerleave'])button.addEventListener(event,cancel);
@@ -695,18 +797,48 @@ function bindLogoSearch(button,station){
  button.addEventListener('keydown',e=>{if(e.key==='F10'&&e.shiftKey){e.preventDefault();open();}});
  button.style.webkitTouchCallout='none';
 }
-function openLogoSearch(station){
+function openLogoSearch(station,frequency){
  if(document.querySelector('.logo-picker'))return;
  const dialog=element('dialog','logo-picker');
  const header=element('div','logo-picker-header');
- const title=element('h2','','Logo de '+(station.label||'la radio'));
+ const title=element('h2','',station.label||'La radio');
  const close=element('button','iconbutton','\u00d7');close.type='button';close.setAttribute('aria-label','Fermer');close.onclick=()=>dialog.close();
- header.append(title,close);
+ const star=element('button','favorite-star logo-favorite');star.type='button';star.dataset.key=favoriteKey(station);star.dataset.label=station.label||'Radio';
+ star.onclick=async()=>{star.disabled=true;try{await toggleFavorite(station,frequency||mosaicFrequencies(station)[0]||radio.frequencyKHz);}finally{star.disabled=false;}};
+ header.append(title,star,close);
  const message=element('p','muted','Rechercher des logos sur RadioDNS, le site de la radio et Radio Browser.');message.setAttribute('role','status');
  const search=element('button','primary','Rechercher un logo');search.type='button';
  const grid=element('div','logo-picker-grid');
- dialog.append(header,message,search,grid);document.body.append(dialog);
- dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
+ const slideBox=element('div','logo-slide-choice');
+ const slidePreview=element('img');slidePreview.alt='Slideshow actuel';slidePreview.hidden=true;
+ const useSlide=element('button','secondary','Utiliser le slideshow actuel');useSlide.type='button';
+ const hint=element('small','muted','Lance cette radio et attends son logo dans le slideshow.');
+ slideBox.append(slidePreview,useSlide,hint);
+ const currentSlide=()=>{
+  const img=$('slide'),cur=radio.current||{};
+  return !scan.active&&cur.playing&&favoriteKey(cur)===favoriteKey(station)&&!img.hidden&&img.complete&&img.naturalWidth>0&&img.dataset.broadcastSlide==='true'&&img.dataset.artworkOwner===[radio.frequencyKHz,Number(cur.sid),Number(cur.scids||0)].join(':')?img:null;
+ };
+ const refreshSlide=()=>{
+  const img=currentSlide();useSlide.disabled=!img;
+  slidePreview.hidden=!img;
+  if(img&&slidePreview.dataset.source!==img.getAttribute('src')){
+   // Capture the decoded pixels: the slideshow endpoint can change between requests.
+   const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;canvas.getContext('2d').drawImage(img,0,0);
+   slidePreview.src=canvas.toDataURL('image/png');slidePreview.dataset.source=img.getAttribute('src');
+  }
+ };
+ useSlide.onclick=async()=>{
+  const img=currentSlide();if(!img)return;
+  useSlide.disabled=true;
+  try{
+   const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;canvas.getContext('2d').drawImage(img,0,0);
+   await api('/api/logos/slideshow',{sid:station.sid,scids:station.scids||0,image:canvas.toDataURL('image/png').split(',')[1]});
+   stationLogos=await api('/api/logos');serviceSignature='';librarySignature='';favoriteSignature='';manualStationsSignature='';mosaicSignature='';renderRadio();renderFavorites();renderMosaic();await loadLibrary();dialog.close();toast('Slideshow enregistr\u00e9 comme logo de la radio.');
+  }catch(e){message.textContent=e.message;refreshSlide();}
+ };
+ dialog.append(header,message,search,slideBox,grid);document.body.append(dialog);
+ refreshSlide();const slideTimer=setInterval(refreshSlide,1000);dialog.addEventListener('close',()=>clearInterval(slideTimer));
+ dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();updateFavoriteStars();loadFavorites().catch(()=>{});
  search.onclick=async()=>{
   search.disabled=true;grid.replaceChildren();message.textContent='Recherche en cours\u2026 Tu peux fermer cette fen\u00eatre sans interrompre la radio.';
   try{
@@ -735,3 +867,50 @@ function openLogoSearch(station){
   finally{search.disabled=false;search.textContent='Relancer la recherche';}
  };
 }
+
+// Resume only a system-reported interruption, never an ordinary user pause.
+async function resumeInterruptedPlayback(){
+ if(!interruptedPlayback||!wantedAudio||interruptionResumeBusy||scan.active||busy||!radio.current?.playing||navigator.audioSession?.state==='interrupted')return;
+ if(interruptionAttempts>=3)return;
+ interruptionResumeBusy=true;interruptionAttempts++;
+ try{
+  if(audio.error||audio.ended||!audio.getAttribute('src'))audio.src='/stream/audio?_='+Date.now();
+  await audio.play();
+  if(!wantedAudio){audio.pause();return;}
+  interruptedPlayback=false;interruptionAttempts=0;
+ }catch{
+  if(interruptionAttempts<3)setTimeout(resumeInterruptedPlayback,1500);
+  else toast('La reprise automatique est bloqu\u00e9e par Safari. Utilise Lecture sur l\u2019autoradio ou l\u2019iPhone.');
+ }finally{interruptionResumeBusy=false;playerUI();}
+}
+if(navigator.audioSession){
+ try{navigator.audioSession.type='playback';}catch{}
+ navigator.audioSession.addEventListener('statechange',()=>{
+  if(navigator.audioSession.state==='interrupted'){
+   if(wantedAudio&&!busy&&!scan.active){interruptedPlayback=true;interruptionAttempts=0;}
+  }else resumeInterruptedPlayback();
+ });
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&interruptedPlayback){interruptionAttempts=0;resumeInterruptedPlayback();}});
+window.addEventListener('pageshow',()=>{if(interruptedPlayback){interruptionAttempts=0;resumeInterruptedPlayback();}});
+
+function renderManualDetails(){
+ const panel=$('manualDetails');panel.hidden=manualDetailFrequency===null;if(panel.hidden)return;
+ const channel=channels.find(c=>Number(c.frequencyKHz)===manualDetailFrequency);
+ text('manualDetailTitle','Canal '+(channel?.channel||''));
+ text('manualDetailFrequency',number(manualDetailFrequency/1000,' MHz',3));
+ const live=Number(radio.frequencyKHz)===manualDetailFrequency&&!scan.active;
+ const rows=[];
+ if(live)rows.push(element('p','',radio.syncLevel===2&&radio.ensemble?.valid?'En direct : '+radio.ensemble.label+' \u00b7 SNR '+number(radio.snr,' dB'):'En direct : recherche du signal \u00b7 SNR '+number(radio.snr,' dB')));
+ const muxes=library.multiplexes.filter(m=>Number(m.frequencyKHz)===manualDetailFrequency).sort((a,b)=>String(b.lastSeen).localeCompare(String(a.lastSeen)));
+ for(const m of muxes){
+  const row=element('div','manual-mux-detail');row.append(element('strong','',m.label));
+  const date=new Date(m.lastSeen);row.append(element('small','muted',[(m.services||[]).length+' stations','SNR '+number(m.snr,' dB'),Number.isNaN(date.getTime())?'':date.toLocaleString('fr-FR')].filter(Boolean).join(' \u00b7 ')));rows.push(row);
+ }
+ if(!muxes.length)rows.push(element('p','muted','Aucun multiplex m\u00e9moris\u00e9 sur ce canal.'));
+ $('manualDetailMuxes').replaceChildren(...rows);
+ $('manualDetailTune').disabled=busy||scan.active;
+ $('manualDetailTune').textContent=live?'Recevoir ce canal \u00e0 nouveau':'Recevoir ce canal';
+}
+$('manualDetailTune').onclick=()=>{if(manualDetailFrequency!==null)selectStation(manualDetailFrequency);};
+$('manualDetailClose').onclick=()=>{const f=manualDetailFrequency;manualDetailFrequency=null;renderManual();document.querySelector('.manual-bar[data-frequency="'+f+'"]')?.focus({preventScroll:true});};

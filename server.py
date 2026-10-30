@@ -128,11 +128,11 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         if origin and origin != 'http://' + self.headers.get('Host', ''):
             return self.send(403, {'error': 'Origine refusée'})
-        if self.path in ('/api/logos/search', '/api/logos/status', '/api/logos/select'):
+        if self.path in ('/api/logos/search', '/api/logos/status', '/api/logos/select', '/api/logos/slideshow'):
             if self.headers.get('X-Gain-Control') != '1': return self.send(403, {'error':'Requete refusee'})
             try:
                 n = int(self.headers.get('Content-Length', '0'))
-                if not 0 < n <= 4096: raise ValueError('Requete incorrecte')
+                if not 0 < n <= (2_800_000 if self.path.endswith('/slideshow') else 4096): raise ValueError('Requete incorrecte')
                 return self.send(200, logo_choices.request(self.path.rsplit('/',1)[1], json.loads(self.rfile.read(n))))
             except (ValueError, TypeError, KeyError) as exc: return self.send(400, {'error':str(exc)})
             except OSError: return self.send(503, {'error':'Enregistrement indisponible'})

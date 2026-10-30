@@ -1,4 +1,4 @@
-# AbracaDABra Live Monitor — Portable 0.1 (préversion)
+# AbracaDABra Live Monitor — Portable 0.2 (préversion)
 
 Interface web communautaire pour AbracaDABra. Projet indépendant, non officiel.
 
@@ -39,6 +39,14 @@ python -m pip install -r requirements-build.txt
 
 La sortie est `dist/Live-Monitor-Windows-x64.zip`. Le code du filtre et sa commande de compilation Zig sont dans `filter/README.md`. Le binaire fourni correspond à `filter/sha256.json`.
 
-## Publication GitHub ultérieure
+## Depot et distribution
 
-Ne publier que ce dossier source, en respectant `.gitignore`, jamais les données du serveur personnel ni `data/receiver`. Choisir la licence du code propre au projet et identifier son auteur avant publication ; aucune licence de ce code n'est encore attribuée. Les notices des dépendances sont dans `THIRD-PARTY`. Examiner les droits d'utilisation du logo DAB+ avant publication publique, ou le remplacer par une identité graphique originale. Aucun dépôt GitHub n'a encore été créé.
+Sources : https://github.com/DABodr/abracadabra-live-monitor
+
+Telechargements : https://github.com/DABodr/abracadabra-live-monitor/releases
+
+Ne jamais publier le dossier `data`, les favoris personnels, les journaux ni la copie locale du recepteur. Les mises a jour du programme n'incluent pas ces donnees.
+
+Le code propre a ce projet n'a pas encore de licence open source attribuee. La visibilite publique du depot n'accorde pas automatiquement des droits de redistribution ou de modification. Les composants tiers conservent leurs licences respectives (voir `THIRD-PARTY`). AbracaDABra et DAB+ sont des marques appartenant a leurs titulaires ; ce projet est independant.
+
+La version 0.2 contient les ameliorations decrites dans `UPDATES-2026-10-30.md`. La reprise audio automatique apres appel sur iPhone reste une limite connue.

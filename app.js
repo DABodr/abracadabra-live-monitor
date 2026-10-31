@@ -5,6 +5,7 @@ let radio = {}, scan = {active:false}, library = {multiplexes:[]}, channels = []
 let wantedAudio = false, serviceSignature = '', librarySignature = '', slideKey = '', toastTimer, lastLibraryLoad = 0;
 let remoteScanSeen = false, recoveryPending = false;
 let interruptedPlayback=false, interruptionResumeBusy=false, interruptionAttempts=0;
+let networkRetryTimer=null,networkRetryCount=0,networkRetryGeneration=0,networkRecovering=false;
 let stationLogos = {}, lastLogoLoad = 0;
 let artworkRetryAt = 0;
 let favorites=[];
@@ -86,9 +87,10 @@ async function chooseFavoriteChannel(station,frequency){
  }catch(e){toast('Canal non enregistr\u00e9 : '+e.message);}
  finally{favoritesBusy=false;favoriteSignature='';renderFavorites();updateControls();}
 }
+function orderedFavorites(){return [...new Map(favorites.map(s=>[favoriteKey(s),s])).values()].sort((a,b)=>a.label.localeCompare(b.label,'fr',{sensitivity:'base',numeric:true})||favoriteKey(a).localeCompare(favoriteKey(b)));}
 function renderFavorites(){
  const signature=JSON.stringify([favorites,stationLogos,library.multiplexes]);if(signature===favoriteSignature)return;favoriteSignature=signature;
- const unique=[...new Map(favorites.map(s=>[favoriteKey(s),s])).values()].sort((a,b)=>a.label.localeCompare(b.label,'fr',{sensitivity:'base',numeric:true})||favoriteKey(a).localeCompare(favoriteKey(b)));
+ const unique=orderedFavorites();
  $('favoriteStations').replaceChildren(...unique.map(s=>{
   const row=stationButton(s,s.frequencyKHz);
   const muxNames=[...new Set(library.multiplexes.filter(m=>Number(m.frequencyKHz)===Number(s.frequencyKHz)&&m.services.some(other=>favoriteKey(other)===favoriteKey(s))).map(m=>m.label).filter(Boolean))];
@@ -207,7 +209,7 @@ function renderSnrQuality(available=true){
 }
 let previousView='listen', favoritesReturnView='listen', favoritesReturnScroll=0;
 function route(){
- const name=['listen','library','scan','settings','favorites','manual','mosaic'].includes(location.hash.slice(1))?location.hash.slice(1):'listen';
+ const name=['listen','library','scan','settings','favorites','manual','mosaic','technical'].includes(location.hash.slice(1))?location.hash.slice(1):'listen';
  if(name==='favorites'&&previousView!=='favorites'){favoritesReturnView=previousView;favoritesReturnScroll=window.scrollY;}
  if(name!=='mosaic'&&mosaicExpanded)setMosaicExpanded(false);
  if(name==='mosaic'){renderMosaic();loadLibrary().catch(e=>toast(e.message));}
@@ -222,7 +224,7 @@ function route(){
  document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!=='view-'+name);
  document.querySelectorAll('[data-view]').forEach(e=>{if(e.dataset.view===name)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
  if($('menuDialog').open)$('menuDialog').close();
- document.title=({listen:'Écoute',library:'Mes multiplex',scan:'Scan auto',settings:'Réglages',favorites:'Favoris',manual:'Scan manuel',mosaic:'Mosa\u00efque radio'})[name]+' · AbracaDABra';
+ document.title=({technical:'Infos techniques',listen:'Écoute',library:'Mes multiplex',scan:'Scan auto',settings:'Réglages',favorites:'Favoris',manual:'Scan manuel',mosaic:'Mosa\u00efque radio'})[name]+' · AbracaDABra';
  window.scrollTo({top:restoreFavoritesScroll?favoritesReturnScroll:0,behavior:'instant'});
  if(name==='library'){updateFavoriteStars();loadFavorites().catch(e=>toast(e.message));loadLibrary().catch(e=>toast(e.message));}
 }
@@ -239,7 +241,8 @@ function updateControls(){
  updateMosaicPlayback();
  document.querySelectorAll('.favorite-channel').forEach(e=>e.disabled=unavailable||favoritesBusy||e.dataset.single==='true');
  $('expandedPlay').disabled=unavailable;
- ['expandedPrevious','expandedNext'].forEach(id=>$(id).disabled=unavailable||(radio.services||[]).length<2);
+ $('expandedFavorite').disabled=busy||scan.active||favoritesBusy||!radio.current?.playing;
+ ['expandedPrevious','expandedNext'].forEach(id=>$(id).disabled=unavailable||(location.hash==='#favorites'?orderedFavorites().length<1:(radio.services||[]).length<2));
  ['rfApply','rfAuto','scanStart'].forEach(id=>$(id).disabled=unavailable);
  $('rfGain').disabled=unavailable||$('rfAuto').checked;
  $('playPause').disabled=unavailable;
@@ -248,12 +251,12 @@ function updateControls(){
  document.querySelectorAll('.station-button,.mux-tune').forEach(e=>e.disabled=unavailable);
 }
 function playerUI(){
- const playing=!audio.paused;
+ const playing=!audio.paused||(wantedAudio&&networkRecovering);
  text('expandedPlay',playing?'Ⅱ':'▶');$('expandedPlay').setAttribute('aria-label',playing?'Mettre en pause':'Écouter le direct');
  text('playPause',playing?'Ⅱ':'▶');$('playPause').setAttribute('aria-label',playing?'Mettre en pause':'Écouter le direct');
  $('heroPlay').textContent=playing?'Mettre en pause  Ⅱ':'Écouter le direct  ▶';
  const reception=[radio.syncLevel===2&&radio.ensemble?.valid?radio.ensemble.label:'',radio.channel?'Canal '+radio.channel:'',typeof radio.snr==='number'&&Number.isFinite(radio.snr)?'SNR '+radio.snr.toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1})+' dB':''].filter(Boolean).join(' · ');
- const playerDetail=scan.active?scanReceptionInfo():busy?'Changement de station…':playing&&audio.readyState<2?'Chargement du direct…':!playing&&wantedAudio?'Reconnexion au direct…':reception||'Appuie sur Lecture pour écouter';
+ const playerDetail=scan.active?scanReceptionInfo():networkRecovering?'Reconnexion au direct\u2026':busy?'Changement de station…':playing&&audio.readyState<2?'Chargement du direct…':!playing&&wantedAudio?'Reconnexion au direct…':reception||'Appuie sur Lecture pour écouter';
  for(const id of ['playerStatus','expandedReception']){
   const node=$(id),match=/SNR\s+-?\d+(?:[,.]\d+)?\s*dB/.exec(playerDetail);
   if(match){
@@ -265,16 +268,59 @@ function playerUI(){
  if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':'paused';
 }
 audio.addEventListener('playing',playerUI);audio.addEventListener('pause',playerUI);
-audio.addEventListener('error',()=>{playerUI();if(interruptedPlayback)return;if(!scan.active&&!busy&&wantedAudio){wantedAudio=false;toast('Le flux a été interrompu. Appuie sur Lecture pour reprendre.');playerUI();}});
+audio.addEventListener('error',()=>{if(!interruptedPlayback)scheduleNetworkRecovery();playerUI();});
+audio.addEventListener('ended',()=>scheduleNetworkRecovery());
+for(const event of ['waiting','stalled'])audio.addEventListener(event,()=>scheduleNetworkRecovery(10000));
+audio.addEventListener('playing',()=>{clearTimeout(networkRetryTimer);networkRetryTimer=null;networkRetryCount=0;networkRecovering=false;});
+audio.addEventListener('timeupdate',()=>{if(!audio.paused&&audio.readyState>=3&&!networkRecovering){clearTimeout(networkRetryTimer);networkRetryTimer=null;networkRetryCount=0;}});
+function cancelNetworkRecovery(){
+ clearTimeout(networkRetryTimer);networkRetryTimer=null;networkRetryCount=0;networkRecovering=false;networkRetryGeneration++;
+}
+function scheduleNetworkRecovery(delay){
+ if(!wantedAudio||busy||scan.active||interruptedPlayback||networkRetryTimer!==null)return;
+ networkRecovering=true;
+ const wait=delay??Math.min(15000,1000*2**Math.min(networkRetryCount,4));
+ networkRetryTimer=setTimeout(reconnectNetworkAudio,wait);playerUI();
+}
+async function reconnectNetworkAudio(){
+ networkRetryTimer=null;
+ if(!wantedAudio||busy||scan.active||interruptedPlayback||navigator.audioSession?.state==='interrupted'){networkRecovering=false;return;}
+ if(navigator.onLine===false){scheduleNetworkRecovery(3000);return;}
+ const generation=++networkRetryGeneration;networkRetryCount++;
+ audio.src='/stream/audio?_='+Date.now();
+ // Watchdog also covers a play promise left pending by a dead connection.
+ scheduleNetworkRecovery(15000);
+ try{
+  await audio.play();
+  if(generation!==networkRetryGeneration)return;
+  if(!wantedAudio){audio.pause();return;}
+ }catch(e){
+  if(generation!==networkRetryGeneration)return;
+  clearTimeout(networkRetryTimer);networkRetryTimer=null;
+  if(e.name==='NotAllowedError'){
+   wantedAudio=false;cancelNetworkRecovery();toast('Appuie sur Lecture pour autoriser la reprise du son.');
+  }else scheduleNetworkRecovery();
+ }
+ playerUI();
+}
+function retryOnNetworkReturn(){
+ if(wantedAudio&&(networkRecovering||audio.error||audio.ended)){
+  clearTimeout(networkRetryTimer);networkRetryTimer=null;scheduleNetworkRecovery(0);
+ }
+}
+window.addEventListener('online',retryOnNetworkReturn);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)retryOnNetworkReturn();});
+window.addEventListener('pageshow',retryOnNetworkReturn);
+
 async function playAudio(){
  if(scan.active||busy)return;
  if(!radio.current?.playing){toast('Choisis une station dans la liste ou dans Mes multiplex.');return;}
- interruptedPlayback=false;interruptionAttempts=0;wantedAudio=true;
+ cancelNetworkRecovery();interruptedPlayback=false;interruptionAttempts=0;wantedAudio=true;
  audio.src='/stream/audio?_='+Date.now();
  try {await audio.play();}catch(e){if(wantedAudio){wantedAudio=false;toast('Appuie à nouveau sur Lecture pour autoriser le son.');}}
  playerUI();
 }
-async function toggleAudio(){if(!audio.paused){wantedAudio=false;interruptedPlayback=false;audio.pause();playerUI();}else await playAudio();}
+async function toggleAudio(){if(!audio.paused||(wantedAudio&&networkRecovering)){cancelNetworkRecovery();wantedAudio=false;interruptedPlayback=false;audio.pause();playerUI();}else await playAudio();}
 $('playPause').onclick=toggleAudio;$('heroPlay').onclick=toggleAudio;
  $('expandedPlay').onclick=toggleAudio;
  $('expandedPrevious').onclick=()=>stepStation(-1);$('expandedNext').onclick=()=>stepStation(1);
@@ -293,15 +339,19 @@ async function stepStation(direction){
   // Refresh before navigating: another listener may have changed the multiplex.
   const [state,scanState]=await Promise.all([api('/api/status'),api('/scan/status')]);
   if(busy||scanState.active)return;
-  const stations=state.services||[];
-  if(stations.length<2)return;
-  const current=stations.findIndex(s=>s.sid===state.current?.sid&&(s.scids||0)===(state.current?.scids||0));
+  const favoriteMode=location.hash==='#favorites';
+  if(favoriteMode)await loadFavorites();
+  const stations=favoriteMode?orderedFavorites():state.services||[];
+  if(!stations.length)return;
+  if(stations.length<2&&favoriteKey(stations[0])===favoriteKey(state.current||{}))return;
+  const current=stations.findIndex(s=>favoriteKey(s)===favoriteKey(state.current||{}));
   const next=current<0?(direction>0?0:stations.length-1):(current+direction+stations.length)%stations.length;
-  await selectStation(state.frequencyKHz,stations[next]);
+  await selectStation(favoriteMode?stations[next].frequencyKHz:state.frequencyKHz,stations[next]);
  }catch(e){toast(e.message);}
  finally{stationNavigationPending=false;}
 }
 async function playFromMediaControls(){
+
  if(scan.active||busy)return;
  // A Bluetooth play command is explicit consent to resume. Reuse the media
  // element immediately, before any network request or stream replacement.
@@ -321,7 +371,7 @@ async function playFromMediaControls(){
 }
 function registerMediaControls(){
  if(!('mediaSession' in navigator))return;
- const handlers={play:playFromMediaControls,pause:()=>{wantedAudio=false;interruptedPlayback=false;audio.pause();},previoustrack:()=>stepStation(-1),nexttrack:()=>stepStation(1),seekbackward:null,seekforward:null,seekto:null};
+ const handlers={play:playFromMediaControls,pause:()=>{cancelNetworkRecovery();wantedAudio=false;interruptedPlayback=false;audio.pause();},previoustrack:()=>stepStation(-1),nexttrack:()=>stepStation(1),seekbackward:null,seekforward:null,seekto:null};
  for(const [action,handler] of Object.entries(handlers)){
   try{navigator.mediaSession.setActionHandler(action,handler);}catch{/* Unsupported action on this browser. */}
  }
@@ -342,7 +392,7 @@ async function selectFirstManualStation(){
 async function selectStation(frequency, station, autoplay=true, alternatives=[]){
  if(busy||scan.active)return;
  pendingManualFrequency=null;
- busy=true;updateControls();wantedAudio=false;interruptedPlayback=false;recoveryPending=false;audio.pause();
+ busy=true;updateControls();cancelNetworkRecovery();wantedAudio=false;interruptedPlayback=false;recoveryPending=false;audio.pause();
  audio.removeAttribute('src');audio.load();
  text('playerStatus','Réception de la station…');
  try {
@@ -398,6 +448,7 @@ function stationButton(station, frequency){
 }
 function highlightStations(){document.querySelectorAll('.station-button,.mosaic-station').forEach(b=>{const active=radio.current?.playing&&(b.classList.contains('mosaic-station')||Number(b.dataset.frequency)===radio.frequencyKHz)&&Number(b.dataset.sid)===Number(radio.current.sid)&&Number(b.dataset.scids)===radio.current.scids;b.classList.toggle('selected',!!active);b.setAttribute('aria-pressed',String(!!active));});}
 function renderRadio(){
+ renderTechnical();
  renderManual();
  const cur=radio.current||{}, adv=radio.advanced||{};
  const dls=!scan.active&&cur.playing?(cur.dls||[cur.dlPlusArtist,cur.dlPlusTitle].filter(Boolean).join(' — ')):'';
@@ -408,6 +459,10 @@ function renderRadio(){
  text('stationMux',!scan.active&&radio.syncLevel===2&&radio.ensemble?.valid?radio.ensemble.label+' · '+(radio.channel||''):'');
  renderSnrQuality();
  text('expandedStation',$('stationName').textContent);
+ const favoriteButton=$('expandedFavorite');
+ favoriteButton.dataset.key=cur.playing?favoriteKey(cur):'';
+ favoriteButton.dataset.label=cur.label||'Radio';
+ updateFavoriteStars();
  const title=!scan.active&&cur.playing?[cur.dlPlusArtist,cur.dlPlusTitle].filter(Boolean).join(' — '):'';
  text('expandedTitle',title);$('expandedTitle').hidden=!title;
  const normalizeCaption=value=>value.toLocaleLowerCase('fr').replace(/[\s—–-]+/g,' ').trim();
@@ -461,8 +516,6 @@ function renderRadio(){
  const signature=JSON.stringify([radio.frequencyKHz,services]);
  if(signature!==serviceSignature){serviceSignature=signature;$('services').replaceChildren(...services.map(s=>stationButton(s,radio.frequencyKHz)));}
  $('servicesEmpty').hidden=services.length>0||scan.active;text('servicesMeta',scan.active?'Le scan utilise le récepteur.':services.length+' station'+(services.length===1?'':'s')+' · '+(radio.ensemble?.label||radio.channel||'Aucun multiplex'));
- const stats=[['Canal',radio.channel||'—'],['Fréquence',number(radio.frequencyKHz/1000,' MHz',3)],['Rapport signal / bruit',number(radio.snr,' dB')],['Gain mesuré',number(adv.gain,' dB')],['Niveau RF',number(adv.rfLevel,' dB')],['Débit audio',adv.bitRate?adv.bitRate+' kbit/s':'—'],['Décalage fréquence',number(adv.freqOffsetHz,' Hz',0)],['Erreurs FIB',adv.decodingStats?adv.decodingStats.fibErrorCntr+' / '+adv.decodingStats.fibCntr:'—']];
- $('technicalStats').replaceChildren(...stats.map(([a,b])=>{const row=element('div','stat-row');row.append(element('dt','',a),element('dd','',b));return row;}));
  updateMediaMetadata();
  highlightStations();updateControls();playerUI();
 }
@@ -629,7 +682,7 @@ async function poll(){
   if(radio.libraryChanged||Date.now()-lastLibraryLoad>(scan.active?3500:15000))loadLibrary().catch(()=>{});
   if(Date.now()-lastFavoritesLoad>5000)loadFavorites().catch(()=>{lastFavoritesLoad=Date.now();});
   if(Date.now()-lastLogoLoad>60000)loadLogos().catch(()=>{lastLogoLoad=Date.now();});
- }catch(e){renderDeviceConnection(null);renderSnrQuality(false);}
+ }catch(e){renderDeviceConnection(null);renderSnrQuality(false);renderTechnical(false);}
  finally{pollRunning=false;pollTimer=setTimeout(poll,Math.max(250,1000-(Date.now()-lastPollStarted)));}
 }
 function refreshReception(){if(lastPollStarted&&Date.now()-lastPollStarted>=1000)poll();}
@@ -639,6 +692,8 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshRec
 window.addEventListener('pageshow',refreshReception);
 async function init(){
  route();
+ // Show the shared receiver immediately, independently of settings and artwork.
+ poll();
  loadFavorites().catch(()=>{});
  try{
   const c=await api('/api/channels');channels=c.channels.filter(x=>x.frequencyKHz>=174928&&x.frequencyKHz<=239200);
@@ -652,7 +707,6 @@ async function init(){
   gain=await api('/gain-control');$('rfAuto').checked=gain.automatic;$('rfGain').max=gain.gains.length-1;$('rfGain').value=gain.index;gainDisplay();
   await loadLogos();await loadLibrary();
  }catch(e){toast(e.message);}
- poll();
 }
 init();
 
@@ -712,7 +766,7 @@ function renderMosaic(){
 }
 function updateMosaicPlayback(){
  const b=$('mosaicPlay');if(!b)return;
- const playing=!audio.paused;
+ const playing=!audio.paused||(wantedAudio&&networkRecovering);
  b.setAttribute('aria-label',playing?'Mettre en pause':'Reprendre la lecture');
  b.innerHTML=playing?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>';
 }
@@ -914,3 +968,62 @@ function renderManualDetails(){
 }
 $('manualDetailTune').onclick=()=>{if(manualDetailFrequency!==null)selectStation(manualDetailFrequency);};
 $('manualDetailClose').onclick=()=>{const f=manualDetailFrequency;manualDetailFrequency=null;renderManual();document.querySelector('.manual-bar[data-frequency="'+f+'"]')?.focus({preventScroll:true});};
+
+$('expandedFavorite').onclick=async()=>{
+ if(busy||scan.active||favoritesBusy||!radio.current?.playing)return;
+ const current={...radio.current},frequency=radio.frequencyKHz;
+ const station=(radio.services||[]).find(s=>favoriteKey(s)===favoriteKey(current))||current;
+ $('expandedFavorite').disabled=true;
+ try{await toggleFavorite(station,frequency);}finally{updateControls();}
+};
+
+function renderTechnical(connected=true){
+ const a=radio.advanced||{},c=radio.current||{},e=radio.ensemble||{},d=a.decodingStats||{};
+ const live=connected&&!scan.active&&radio.syncLevel===2;
+ const service=live&&c.playing;
+ renderTechnicalMeters(live,service,a,d);
+ const value=(v,unit='')=>typeof v==='number'&&Number.isFinite(v)?number(v,unit):'—';
+ const count=v=>Number.isFinite(v)?v.toLocaleString('fr-FR'):'—';
+ const hex=v=>v!==undefined&&v!==null&&Number.isFinite(Number(v))?'0x'+Number(v).toString(16).toUpperCase():'—';
+ const rows=(id,items)=>{$(id).replaceChildren(...items.flatMap(([label,val])=>[element('dt','',label),element('dd','',String(val))]));};
+ text('techContext',connected?[e.valid?e.label:null,radio.channel?'Canal '+radio.channel:null,c.playing?c.label:null].filter(Boolean).join(' · ')||'En attente de réception':'Connexion au serveur perdue');
+ text('techAvailability',!connected?'Les mesures sont indisponibles.':scan.active?'Scan en cours : les statistiques du service sont suspendues.':!live?'En attente de synchronisation : les compteurs de décodage sont masqués.':'Actualisation automatique pendant la réception.');
+ rows('techReception',[
+ ['Synchronisation',!connected?'Indisponible':radio.syncLevel===2?'Complète':radio.syncLevel===1?'Partielle':'Non synchronisé'],
+ ['SNR',connected?value(radio.snr,' dB'):'—'],['Niveau RF (indicatif)',connected?value(a.rfLevel,' dB'):'—'],['Gain mesuré',connected?value(a.gain,' dB'):'—'],['Décalage en fréquence',live?value(a.freqOffsetHz,' Hz'):'—']]);
+ rows('techDecoding',[
+ ['Blocs FIB attendus',live?count(d.fibCntr):'—'],['Blocs FIB erronés',live?count(d.fibErrorCntr):'—'],
+ ['MSC : CRC valides',service?count(d.mscCrcOkCntr):'—'],['MSC : erreurs CRC',service?count(d.mscCrcErrorCntr):'—'],['RS : erreurs de bits signalées',service?count(d.rsBitErrorCntr):'—'],['RS : non corrigeables',service?count(d.rsUncorrectableCntr):'—']]);
+ const au=c.audio||{};
+ rows('techAudio',[
+ ['Débit',service?value(a.bitRate,' kbit/s'):'—'],['Échantillonnage',service?value(au.sampleRate/1000,' kHz'):'—'],['Canaux',service&&typeof au.stereo==='boolean'?(au.stereo?'Stéréo':'Mono'):'—'],['SBR',service&&typeof au.sbr==='boolean'?(au.sbr?'Actif':'Inactif'):'—'],['Stéréo paramétrique',service&&typeof au.parametricStereo==='boolean'?(au.parametricStereo?'Active':'Inactive'):'—'],['Données audio / PAD (octets)',service?count(d.audioServiceBytes)+' / '+count(d.padBytes):'—']]);
+ rows('techIdentity',[
+ ['Fréquence',connected?value(radio.frequencyKHz/1000,' MHz'):'—'],['EID / ECC',live&&e.valid?hex(e.eid)+' / '+hex(e.ecc):'—'],['SID',service?hex(c.sid):'—'],['Composante SCIdS',service?count(c.scids):'—'],['Sous-canal',service?count(a.subChId):'—'],['Taille du sous-canal (CU)',service?count(a.subChSize):'—']]);
+}
+
+function technicalPercent(good,total){
+ return Number.isFinite(good)&&Number.isFinite(total)&&total>0&&good>=0&&good<=total?100*good/total:null;
+}
+function renderTechnicalMeters(live,service,a,d){
+ const fic=live?technicalPercent(d.fibCntr-d.fibErrorCntr,d.fibCntr):null;
+ const msc=service?technicalPercent(d.mscCrcOkCntr,d.mscCrcOkCntr+d.mscCrcErrorCntr):null;
+ const snr=live&&Number.isFinite(radio.snr)?radio.snr:null;
+ const items=[['SNR',snr,30,' dB','0 — 30 dB',snr>=12?'good':snr>=6?'fair':'poor'],
+ ['FIC valide',fic,100,' %','Blocs FIB sans erreur CRC',fic===100?'good':fic>=95?'fair':'poor'],
+ ['MSC valide',msc,100,' %','CRC valides du service (après RS en DAB+)',msc===100?'good':msc>=95?'fair':'poor']];
+ const nodes=items.map(([label,v,max,unit,note,quality])=>{
+  const card=element('article','tech-meter');card.dataset.quality=v===null?'unknown':quality;
+  const heading=element('div','tech-meter-heading');heading.append(element('h2','',label),element('strong','',v===null?'Indisponible':number(v,unit)));
+  const bar=element('div','tech-meter-track');bar.setAttribute('role','meter');bar.setAttribute('aria-label',label);bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax',String(max));
+  if(v!==null){bar.setAttribute('aria-valuenow',String(Math.max(0,Math.min(max,v))));bar.setAttribute('aria-valuetext',number(v,unit));}else{bar.removeAttribute('role');bar.setAttribute('aria-label',label+' : indisponible');}
+  const fill=element('span','');fill.style.width=(v===null?0:Math.max(0,Math.min(100,v/max*100)))+'%';bar.append(fill);
+  card.append(heading,bar,element('small','muted',note));return card;
+ });
+ const offset=live&&Number.isFinite(a.freqOffsetHz)?a.freqOffsetHz:null;
+ const card=element('article','tech-meter');const heading=element('div','tech-meter-heading');heading.append(element('h2','','Décalage fréquence'),element('strong','',offset===null?'Indisponible':number(offset,' Hz',0)));
+ const track=element('div','tech-offset');track.setAttribute('aria-hidden','true');if(offset!==null){const marker=element('span','');marker.style.left=Math.max(0,Math.min(100,50+offset/20))+'%';track.append(marker);}
+ card.append(heading,track,element('small','muted','−1 000 Hz · 0 · +1 000 Hz (jauge bornée)'));nodes.push(card);
+ const errors=service&&Number.isFinite(d.rsUncorrectableCntr)?d.rsUncorrectableCntr:null;
+ const rs=element('article','tech-meter');rs.dataset.quality=errors===null?'unknown':errors===0?'good':'poor';const rh=element('div','tech-meter-heading');rh.append(element('h2','','RS non corrigeables'),element('strong','',errors===null?'Indisponible':String(errors)));rs.append(rh,element('small','muted','Mots de code non corrigés sur la dernière période'));nodes.push(rs);
+ $('techMeters').replaceChildren(...nodes);
+}

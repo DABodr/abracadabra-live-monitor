@@ -1,4 +1,4 @@
-# AbracaDABra Live Monitor — Portable 0.2 (préversion)
+# AbracaDABra Live Monitor — Portable 0.3 (préversion)
 
 Interface web communautaire pour AbracaDABra. Projet indépendant, non officiel.
 
@@ -49,4 +49,4 @@ Ne jamais publier le dossier `data`, les favoris personnels, les journaux ni la 
 
 Le code propre a ce projet n'a pas encore de licence open source attribuee. La visibilite publique du depot n'accorde pas automatiquement des droits de redistribution ou de modification. Les composants tiers conservent leurs licences respectives (voir `THIRD-PARTY`). AbracaDABra et DAB+ sont des marques appartenant a leurs titulaires ; ce projet est independant.
 
-La version 0.2 contient les ameliorations decrites dans `UPDATES-2026-10-30.md`. La reprise audio automatique apres appel sur iPhone reste une limite connue.
+La version 0.3 contient les ameliorations decrites dans `UPDATES-2026-10-30.md` et `UPDATES-2026-10-31.md`. La reprise audio automatique apres appel sur iPhone reste une limite connue.

@@ -39,7 +39,7 @@ def receiver_copy(exe):
 def main():
     prepare()
     window = tk.Tk()
-    window.title('AbracaDABra Live Monitor — Portable 0.2')
+    window.title('AbracaDABra Live Monitor — Portable 0.3')
     window.geometry('580x340')
     status = tk.StringVar(value='Prêt. Choisissez AbracaDABra au premier démarrage.')
     state = {'worker': None, 'server': None, 'module': None, 'closing': False, 'ready': threading.Event()}

@@ -1,10 +1,11 @@
 import atexit, http.client, json, os, pathlib, subprocess, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 from scanner import Scanner
 from logos import Logos
 from logo_choices import LogoChoices
 from favorites import Favorites
+from transmitters import Transmitters
 from receiver_boundary import ReceiverBoundary
 
 ROOT = pathlib.Path(os.environ.get('LIVE_MONITOR_ROOT', pathlib.Path(__file__).resolve().parent))
@@ -12,6 +13,18 @@ CONFIG = ROOT / 'config.json'
 cfg = json.loads(CONFIG.read_text(encoding='utf-8-sig'))
 lock = threading.Lock()
 child = None
+presence_lock = threading.Lock()
+presence_clients = {}
+def connected_clients(client_id=None):
+    stamp = time.monotonic()
+    with presence_lock:
+        for key, seen in list(presence_clients.items()):
+            if stamp-seen > 90:
+                del presence_clients[key]
+        if isinstance(client_id, str) and 8 <= len(client_id) <= 80 and all(c.isalnum() or c in '-_' for c in client_id):
+            presence_clients[client_id] = stamp
+        return len(presence_clients)
+
 generation = 0
 log = open(ROOT / 'receiver.log', 'ab', buffering=0)
 
@@ -39,6 +52,8 @@ scanner = Scanner(ROOT, backend_request, lock, save_station)
 logos = Logos(ROOT)
 logo_choices = LogoChoices(ROOT)
 favorites = Favorites(ROOT)
+transmitters = Transmitters(ROOT)
+scanner.resolve_transmitters = transmitters.enrich
 
 def backend_status():
     return backend_request('GET', '/api/status')
@@ -95,12 +110,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
     def do_GET(self):
+        if urlsplit(self.path).path == '/signal/history':
+            try:
+                seconds = int(parse_qs(urlsplit(self.path).query).get('seconds', ['0'])[0])
+                if seconds not in (0,300,900,3600,21600,86400): raise ValueError()
+                return self.send(200, scanner.signal_history.read(seconds))
+            except ValueError:
+                return self.send(400, {'error':'Periode incorrecte'})
+        if self.path == '/tii/position': return self.send(200, {'position': transmitters.position()})
+        if self.path == '/tii/database': return self.send(200, transmitters.refresh())
         if self.path == '/favorites': return self.send(200, favorites.read())
         if self.path == '/api/status':
             acquired = lock.acquire(blocking=False)
             try:
                 state = backend_request('GET', '/api/status')
+                state['transmitters'] = transmitters.enrich(state)
                 state['libraryChanged'] = scanner.observe(state) if acquired else False
+                state['lastReception'] = scanner.reception_snapshot(state)
+                state['connectedClients'] = connected_clients(self.headers.get('X-Client-Id'))
                 return self.send(200, state)
             except Exception as exc:
                 return self.send(503, {'error': str(exc)})
@@ -128,6 +155,22 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         if origin and origin != 'http://' + self.headers.get('Host', ''):
             return self.send(403, {'error': 'Origine refusée'})
+        if self.path == '/tii/position':
+            if self.headers.get('X-Gain-Control') != '1': return self.send(403, {'error':'Requete refusee'})
+            try:
+                n = int(self.headers.get('Content-Length', '0'))
+                if not 0 < n <= 4096: raise ValueError('Requete incorrecte')
+                return self.send(200, {'position':transmitters.set_position(json.loads(self.rfile.read(n)))})
+            except (ValueError, TypeError, KeyError) as exc: return self.send(400, {'error':str(exc)})
+            except OSError: return self.send(503, {'error':'Enregistrement indisponible'})
+        if self.path == '/tii/database':
+            if self.headers.get('X-Gain-Control') != '1': return self.send(403, {'error':'Requete refusee'})
+            try:
+                n = int(self.headers.get('Content-Length', '0'))
+                if not 0 < n <= 16_000_000: raise ValueError('Fichier trop volumineux')
+                return self.send(200, transmitters.import_csv(json.loads(self.rfile.read(n)).get('csv')))
+            except (ValueError, TypeError, AttributeError) as exc: return self.send(400, {'error':str(exc)})
+            except OSError: return self.send(503, {'error':'Import indisponible'})
         if self.path in ('/api/logos/search', '/api/logos/status', '/api/logos/select', '/api/logos/slideshow'):
             if self.headers.get('X-Gain-Control') != '1': return self.send(403, {'error':'Requete refusee'})
             try:
@@ -144,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, favorites.update(json.loads(self.rfile.read(n))))
             except (ValueError, TypeError): return self.send(400, {'error': 'Favoris incorrects'})
             except OSError: return self.send(503, {'error': 'Enregistrement impossible'})
-        if self.path in ('/scan/start', '/scan/cancel', '/receiver/select', '/library/delete'):
+        if self.path in ('/scan/start', '/scan/cancel', '/receiver/select', '/library/delete', '/scan/archive/delete'):
             if self.headers.get('X-Gain-Control') != '1':
                 return self.send(403, {'error': 'Requête refusée'})
             try:
@@ -152,6 +195,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not 0 <= n <= 4096: raise ValueError('Requête incorrecte')
                 data = json.loads(self.rfile.read(n)) if n else {}
                 if not isinstance(data, dict): raise ValueError('Requête incorrecte')
+                if self.path == '/scan/archive/delete': return self.send(200, scanner.delete_archive(data.get('id')))
                 if self.path == '/library/delete': return self.send(200, scanner.delete(data.get('id')))
                 if self.path == '/scan/start':
                     repeat = data.get('repeat', False)
@@ -228,10 +272,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', r.getheader('Content-Type'))
                 self.send_header('Connection','close')
                 self.end_headers(); sent = True; self.close_connection = True
+                client_id = parse_qs(urlsplit(self.path).query).get('client', [None])[0]
                 while True:
                     block = r.read1(8192)
                     if not block: break
                     self.wfile.write(block); self.wfile.flush()
+                    connected_clients(client_id)
             else:
                 data = r.read()
                 if self.path == '/' and r.status == 200:
@@ -250,11 +296,13 @@ if __name__ == '__main__':
     atexit.register(stop)
     try:
         start()
+        scanner.start_monitor()
         print('AbracaDABra Web : http://127.0.0.1:7979/ — Ctrl+C pour arrêter.', flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        scanner.stop_monitor()
         scanner.cancel()
         if scanner.thread and scanner.thread.is_alive(): scanner.thread.join(timeout=20)
         server.server_close()

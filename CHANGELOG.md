@@ -1,5 +1,9 @@
 # Historique
 
+## Sources du 2026-11-04 (non distribuees en ZIP)
+
+TII et carte, DAB scan unifie, archives, surveillance autonome, historique SNR, compteur de connexions et affichage Bluetooth simplifie. Voir `UPDATES-2026-11-04.md`.
+
 ## 0.1 ? 2026-10-27
 
 Premier instantan? versionn? du travail existant. Les modifications ant?rieures ne sont pas reconstitu?es en commits artificiels.

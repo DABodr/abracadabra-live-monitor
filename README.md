@@ -1,5 +1,7 @@
 # AbracaDABra Live Monitor — Portable 0.3 (préversion)
 
+> Sources mises a jour le 4 novembre 2026. Le ZIP publie v0.3.0 ne contient pas encore les fonctions TII, carte et DAB scan unifie. Voir [les nouveautes](UPDATES-2026-11-04.md) et [le recepteur TII](receiver-tii/README-TII.md).
+
 Interface web communautaire pour AbracaDABra. Projet indépendant, non officiel.
 
 ## Utiliser le ZIP sur Windows x64

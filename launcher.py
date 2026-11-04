@@ -61,6 +61,7 @@ def main():
             httpd = server.ThreadingHTTPServer(('0.0.0.0', 7979), server.Handler)
             state['server'] = httpd
             server.start()
+            server.scanner.start_monitor()
             announce('Serveur démarré. Vous pouvez ouvrir l’interface.')
             state['ready'].set()
             httpd.serve_forever()
@@ -69,6 +70,7 @@ def main():
         finally:
             module = state['module']
             if module:
+                module.scanner.stop_monitor()
                 module.scanner.cancel()
                 if module.scanner.thread and module.scanner.thread.is_alive():
                     module.scanner.thread.join(timeout=20)

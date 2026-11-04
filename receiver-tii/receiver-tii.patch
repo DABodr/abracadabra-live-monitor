@@ -1,0 +1,135 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 1dc40c3..c1db802 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -215,6 +215,7 @@ set_source_files_properties(${QML_SINGLETONS}
+     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+ 
+ qt_add_qml_module(${TARGET}
++    NO_CACHEGEN
+     URI abracaComponents
+     VERSION 1.0
+     RESOURCES
+diff --git a/src/cli/dabcliapp.cpp b/src/cli/dabcliapp.cpp
+index f6a7fe8..c33cd89 100644
+--- a/src/cli/dabcliapp.cpp
++++ b/src/cli/dabcliapp.cpp
+@@ -160,6 +160,11 @@ QString dlPlusContentTypeLabel(DLPlusContentType type)
+ }
+ }  // namespace
+ 
++// Qt Windows headers alias main; the decoder TII structure has a field with that name.
++#ifdef main
++#undef main
++#endif
++
+ Q_LOGGING_CATEGORY(cliApp, "DabCli", QtInfoMsg)
+ 
+ DabCliApp::DabCliApp(const CliConfig &config, QObject *parent) : QObject(parent), m_config(config) {}
+@@ -280,6 +285,20 @@ bool DabCliApp::start()
+     connect(m_radioControl, &RadioControl::decodingStats, this, &DabCliApp::onDecodingStats, Qt::QueuedConnection);
+ 
+     connect(this, &DabCliApp::tuneServiceRequested, m_radioControl, &RadioControl::tuneService, Qt::QueuedConnection);
++    connect(m_radioControl, &RadioControl::tiiData, this, [this](const RadioControlTIIData &data) {
++        QMutexLocker lock(&m_mutex);
++        m_tiiIds = QJsonArray();
++        for (const auto &id : data.idList) {
++            QJsonObject entry;
++            entry["mainId"] = int(id.main);
++            entry["subId"] = int(id.sub);
++            entry["level"] = double(id.level);
++            m_tiiIds.append(entry);
++        }
++        m_tiiUpdated.restart();
++    }, Qt::QueuedConnection);
++    QMetaObject::invokeMethod(m_radioControl, [this]() { m_radioControl->startTii(true); }, Qt::QueuedConnection);
++
+ 
+     if (!openInputDevice())
+     {
+@@ -436,6 +455,8 @@ bool DabCliApp::requestTuneFrequency(uint32_t freqKHz, QString *errorOut)
+     {
+         QMutexLocker lock(&m_mutex);
+         m_services.clear();
++        m_tiiIds = QJsonArray();
++        m_tiiUpdated.invalidate();
+         m_currentFrequency = freqKHz;
+         m_currentSid = m_config.haveInitialService ? m_config.initialSid : 0;
+         m_currentScids = m_config.haveInitialService ? m_config.initialScids : 0;
+@@ -558,12 +579,20 @@ void DabCliApp::resolvePendingServiceLabel()
+ void DabCliApp::onEnsembleInformation(const RadioControlEnsemble &ens)
+ {
+     QMutexLocker lock(&m_mutex);
++    if (m_ensemble.ueid != ens.ueid || m_ensemble.frequency != ens.frequency) {
++        m_tiiIds = QJsonArray();
++        m_tiiUpdated.invalidate();
++    }
+     m_ensemble = ens;
+ }
+ 
+ void DabCliApp::onServiceListEntry(const RadioControlEnsemble &ens, const RadioControlServiceComponent &s)
+ {
+     QMutexLocker lock(&m_mutex);
++    if (m_ensemble.ueid != ens.ueid || m_ensemble.frequency != ens.frequency) {
++        m_tiiIds = QJsonArray();
++        m_tiiUpdated.invalidate();
++    }
+     m_ensemble = ens;
+ 
+     CliServiceInfo info;
+@@ -582,7 +611,11 @@ void DabCliApp::onServiceListComplete(const RadioControlEnsemble &ens)
+     int numServices;
+     {
+         QMutexLocker lock(&m_mutex);
+-        m_ensemble = ens;
++        if (m_ensemble.ueid != ens.ueid || m_ensemble.frequency != ens.frequency) {
++        m_tiiIds = QJsonArray();
++        m_tiiUpdated.invalidate();
++    }
++    m_ensemble = ens;
+         numServices = m_services.size();
+     }
+     qCInfo(cliApp) << "Service list complete:" << numServices << "service component(s)";
+@@ -594,6 +627,7 @@ void DabCliApp::onSignalState(uint8_t sync, float snr)
+ {
+     QMutexLocker lock(&m_mutex);
+     m_syncLevel = sync;
++    if (sync != 2) { m_tiiIds = QJsonArray(); m_tiiUpdated.invalidate(); }
+     m_snr = snr;
+ }
+ 
+@@ -802,6 +836,13 @@ QJsonObject DabCliApp::statusJson() const
+     ensembleObj["ecc"] = m_ensemble.ecc();
+     ensembleObj["valid"] = m_ensemble.isValid();
+     root["ensemble"] = ensembleObj;
++    QJsonObject tii;
++    tii["supported"] = true;
++    const bool fresh = m_tiiUpdated.isValid() && m_tiiUpdated.elapsed() < 10000 && m_syncLevel == 2;
++    tii["detections"] = fresh ? m_tiiIds : QJsonArray();
++    tii["ageMs"] = m_tiiUpdated.isValid() ? double(m_tiiUpdated.elapsed()) : -1.0;
++    root["tii"] = tii;
++
+ 
+     QJsonObject currentObj;
+     currentObj["sid"] = QString("0x%1").arg(m_currentSid, 0, 16);
+diff --git a/src/cli/dabcliapp.h b/src/cli/dabcliapp.h
+index e2cbd7c..cdbc5cd 100644
+--- a/src/cli/dabcliapp.h
++++ b/src/cli/dabcliapp.h
+@@ -28,6 +28,7 @@
+ #define DABCLIAPP_H
+ 
+ #include <QHostAddress>
++#include <QElapsedTimer>
+ #include <QJsonArray>
+ #include <QJsonObject>
+ #include <QMap>
+@@ -174,6 +175,8 @@ private:
+     // the MPRIS "now playing" subtitle updates triggered from the same DL Plus/DLS handlers)
+     QString buildCurrentSubtitleLocked() const;
+ 
++    QJsonArray m_tiiIds;
++    QElapsedTimer m_tiiUpdated;
+     CliConfig m_config;
+ 
+     QThread *m_radioControlThread = nullptr;

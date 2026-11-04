@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import uuid
+from signal_history import SignalHistory
 
 
 def now():
@@ -14,10 +15,15 @@ def now():
 class Scanner:
     def __init__(self, root, request, receiver_lock, save_station):
         self.path = root / 'multiplexes.json'
+        self.signal_history = SignalHistory(root)
         self.request, self.receiver_lock, self.save_station = request, receiver_lock, save_station
         self.guard = threading.RLock()
         self.cancelled = threading.Event()
         self.thread = None
+        self.monitor_stop = threading.Event()
+        self.monitor_thread = None
+        self.last_reception = None
+        self.resolve_transmitters = lambda state: {}
         self.data = {'multiplexes': {}, 'lastScan': None}
         if self.path.exists():
             # Never silently overwrite a damaged library.
@@ -47,7 +53,20 @@ class Scanner:
 
     def library(self):
         with self.guard:
-            return {'multiplexes': sorted(copy.deepcopy(list(self.data['multiplexes'].values())), key=lambda x: (x['frequencyKHz'], x['label'])), 'lastScan': copy.deepcopy(self.data['lastScan'])}
+            return {'multiplexes': sorted(copy.deepcopy(list(self.data['multiplexes'].values())), key=lambda x: (x['frequencyKHz'], x['label'])), 'lastScan': copy.deepcopy(self.data['lastScan']), 'scanArchives': copy.deepcopy(self.data.get('scanArchives', []))}
+
+    def delete_archive(self, archive_id):
+        if not isinstance(archive_id, str) or not archive_id:
+            raise ValueError('Identifiant incorrect')
+        with self.guard:
+            previous = self.data.get('scanArchives', [])
+            self.data['scanArchives'] = [a for a in previous if a.get('id') != archive_id]
+            try:
+                self.persist()
+            except OSError:
+                self.data['scanArchives'] = previous
+                raise
+            return self.library()
 
     def remember(self, state, scan_id=None):
         ensemble = state.get('ensemble', {})
@@ -66,7 +85,10 @@ class Scanner:
                 detections = self.data['lastScan'].setdefault('detections', {})
                 old = detections.get(key, {})
                 detected = self.data['multiplexes'][key]
-                detections[key] = dict(id=key, label=detected['label'], channel=detected['channel'],
+                tii_sites = {item['key']: item for item in old.get('tiiSites', [])}
+                for item in state.get('scanTiiSites', []):
+                    tii_sites[item['key']] = item
+                detections[key] = dict(tiiSites=list(tii_sites.values()), id=key, label=detected['label'], channel=detected['channel'],
                     frequencyKHz=detected['frequencyKHz'], snr=detected['snr'],
                     firstSeen=old.get('firstSeen', detected['lastSeen']), lastSeen=detected['lastSeen'],
                     count=old.get('count', 0)+1)
@@ -87,6 +109,76 @@ class Scanner:
                 self.data = previous
                 raise
             return self.library()
+
+    def start_monitor(self):
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            return
+        self.monitor_stop.clear()
+        self.monitor_thread = threading.Thread(target=self.monitor, name='channel-monitor', daemon=True)
+        self.monitor_thread.start()
+
+    def stop_monitor(self):
+        self.monitor_stop.set()
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=7)
+
+    def monitor_once(self):
+        if not self.receiver_lock.acquire(blocking=False):
+            return False
+        try:
+            if self.state.get('active'):
+                return False
+            state = self.request('GET', '/api/status')
+            self.signal_history.record(state)
+            changed = self.observe(state)
+            self.prepare_reception(state)
+            return changed
+        finally:
+            self.receiver_lock.release()
+
+    def prepare_reception(self, state):
+        frequency = state.get('frequencyKHz')
+        ensemble = state.get('ensemble') or {}
+        with self.guard:
+            if self.last_reception and self.last_reception['frequencyKHz'] != frequency:
+                self.last_reception = None
+            if state.get('syncLevel') != 2 or not ensemble.get('valid'):
+                return
+            identity = (frequency, ensemble.get('ecc'), ensemble.get('eid'))
+            previous_identity = self.last_reception.get('identity') if self.last_reception else None
+            if previous_identity != identity:
+                self.last_reception = dict(frequencyKHz=frequency, identity=identity, ensemble=copy.deepcopy(ensemble), station={}, firstSeen=now(), tiiSites={})
+            self.last_reception['lastSeen'] = now()
+            for detection in self.resolve_transmitters(state).get('detections', []):
+                code = str(detection['mainId']) + ':' + str(detection['subId'])
+                self.last_reception['tiiSites'][code] = dict(copy.deepcopy(detection), lastSeen=now())
+            services = state.get('services') or []
+            if not services:
+                return
+            current = state.get('current') or {}
+            selected = next((s for s in services if str(s.get('sid')).lower() == str(current.get('sid')).lower() and s.get('scids', 0) == current.get('scids', 0)), None)
+            if not selected:
+                selected = services[0]
+                self.request('POST', '/api/service', {'sid': selected['sid'], 'scids': selected.get('scids', 0)})
+            self.last_reception['station'] = copy.deepcopy(selected)
+
+    def reception_snapshot(self, state):
+        with self.guard:
+            if self.state.get('active') or not self.last_reception or self.last_reception['frequencyKHz'] != state.get('frequencyKHz'):
+                return None
+            ensemble = state.get('ensemble') or {}
+            if state.get('syncLevel') == 2 and ensemble.get('valid') and (ensemble.get('ecc'), ensemble.get('eid')) != self.last_reception['identity'][1:]:
+                return None
+            return copy.deepcopy(self.last_reception)
+
+    def monitor(self):
+        while not self.monitor_stop.is_set():
+            try:
+                self.monitor_once()
+            except Exception:
+                # A receiver restart or temporary outage must not stop monitoring.
+                pass
+            self.monitor_stop.wait(1)
 
     def observe(self, state):
         """Persist discoveries after tuning has completed, without writing every SNR tick."""
@@ -111,10 +203,16 @@ class Scanner:
                 raise RuntimeError('La liste des canaux DAB est incomplète.')
             self.save_station(previous)
             self.remember(previous)
+            self.signal_history.reset()
             self.cancelled.clear()
             scan_id = uuid.uuid4().hex
             with self.guard:
                 self.state.update(repeat=repeat, cycle=1, active=True, phase='scanning', channel='', completed=0, total=len(channels), found=0, error='', message='Recherche des multiplex…')
+                old_scan = self.data.get('lastScan')
+                if old_scan:
+                    archives = self.data.setdefault('scanArchives', [])
+                    if not any(item.get('id') == old_scan.get('id') for item in archives):
+                        archives.insert(0, copy.deepcopy(old_scan))
                 self.data['lastScan'] = dict(id=scan_id, startedAt=now(), status='running', completed=0, total=len(channels), found=0)
                 self.persist()
             self.thread = threading.Thread(target=self.run, args=(channels, previous, scan_id), daemon=True)
@@ -171,6 +269,7 @@ class Scanner:
                         self.state['channel'] = channel['channel']
                     self.request('POST', '/api/tune', {'channel': channel['channel']})
                     started, stable_since, signature, candidate = time.monotonic(), None, None, None
+                    collected_tii = {}
                     while not self.cancelled.wait(.35):
                         state = self.request('GET', '/api/status')
                         elapsed = time.monotonic() - started
@@ -178,11 +277,19 @@ class Scanner:
                         # fresh services on the requested frequency after synchronisation.
                         fresh = state.get('frequencyKHz') == channel['frequencyKHz'] and state.get('syncLevel') == 2
                         if elapsed >= 2 and fresh and state.get('ensemble', {}).get('valid') and state.get('services'):
+                            identity = (state['frequencyKHz'], state['ensemble'].get('ecc'), state['ensemble'].get('eid'))
+                            bucket = collected_tii.setdefault(identity, {})
+                            levels = {(d.get('mainId'), d.get('subId')): d.get('level') for d in (state.get('tii') or {}).get('detections', [])}
+                            for detection in self.resolve_transmitters(state).get('detections', []):
+                                for site in detection.get('sites') or [None]:
+                                    site_key = ':'.join(map(str, (detection['mainId'], detection['subId'], site.get('name') if site else '', site.get('latitude') if site else '', site.get('longitude') if site else '')))
+                                    bucket[site_key] = dict(key=site_key, mainId=detection['mainId'], subId=detection['subId'], level=levels.get((detection['mainId'], detection['subId'])), site=site, ambiguous=len(detection.get('sites', [])) > 1, lastSeen=now())
+                            state['scanTiiSites'] = list(bucket.values())
                             candidate = state
                             current = (state['ensemble'].get('ecc'), state['ensemble'].get('eid'), tuple(sorted((str(s['sid']), s.get('scids', 0), s.get('label', '')) for s in state['services'])))
                             if current != signature:
                                 signature, stable_since = current, time.monotonic()
-                            elif time.monotonic() - stable_since >= 2:
+                            elif time.monotonic() - stable_since >= 2 and (not (state.get('tii') or {}).get('supported') or (elapsed >= 8 and bucket)):
                                 break
                         if not fresh or not state.get('services'):
                             candidate, signature, stable_since = None, None, None

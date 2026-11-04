@@ -5,3 +5,10 @@ build/
 dist/
 data/
 .venv/
+
+transmitters.csv
+receiver-tii/runtime/
+
+receiver-position.json
+
+signal-history.sqlite3*

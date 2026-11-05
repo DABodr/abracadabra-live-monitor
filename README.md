@@ -1,36 +1,50 @@
-# AbracaDABra Live Monitor — Portable 0.3 (préversion)
+﻿# AbracaDABra Live Monitor — Portable 0.4 (préversion)
 
-> Sources mises a jour le 4 novembre 2026. Le ZIP publie v0.3.0 ne contient pas encore les fonctions TII, carte et DAB scan unifie. Voir [les nouveautes](UPDATES-2026-11-04.md) et [le recepteur TII](receiver-tii/README-TII.md).
+Interface web communautaire indépendante et non officielle. Cette version inclut le récepteur AbracaDABra modifié pour les TII et ses DLL compatibles. Python et une installation séparée d’AbracaDABra ne sont pas nécessaires.
 
-Interface web communautaire pour AbracaDABra. Projet indépendant, non officiel.
+## Installation Windows x64
 
-## Utiliser le ZIP sur Windows x64
+1. Télécharger **Live-Monitor-Windows-x64-0.4.zip** depuis [les versions publiées](https://github.com/DABodr/abracadabra-live-monitor/releases/tag/v0.4.0).
+2. Extraire **tout le ZIP** dans un dossier accessible en écriture, par exemple Documents. Garder `_internal` à côté de `Live-Monitor.exe`.
+3. Brancher une clé RTL-SDR avec son pilote WinUSB déjà installé. Si elle fonctionne dans AbracaDABra, fermer celui-ci pour libérer la clé.
+4. Ouvrir `Live-Monitor.exe`, puis cliquer sur **Démarrer** et **Ouvrir l’interface**.
+5. Sur un téléphone du même réseau, ouvrir l’adresse réseau indiquée par le lanceur. Si Windows le demande, autoriser l’accès sur le réseau privé de confiance.
+6. Pour arrêter, utiliser **Arrêter** ou fermer le lanceur. Le réduire laisse le serveur actif.
 
-1. Télécharger et extraire la distribution officielle **AbracaDABra 4.3.0 Windows** : https://github.com/KejPi/AbracaDABra/releases/tag/v4.3.0
-2. Vérifier que la clé RTL-SDR fonctionne dans AbracaDABra, puis fermer le logiciel pour libérer la clé.
-3. Extraire **tout le ZIP** Live Monitor dans un dossier accessible en écriture, par exemple Documents. Ne pas lancer depuis le ZIP ni placer dans Program Files.
-4. Ouvrir `Live-Monitor.exe`, cliquer sur **Démarrer**, puis choisir l'exécutable AbracaDABra de la distribution originale.
-5. Une copie indépendante du récepteur est créée dans `data/receiver`. L'installation originale reste inchangée. Le filtre RTL-SDR est adapté uniquement pour les binaires dont les empreintes correspondent à la version testée.
-6. Cliquer sur **Ouvrir l'interface**. Sur un téléphone connecté au même réseau, utiliser l'adresse réseau indiquée dans la fenêtre. Si Windows demande une autorisation réseau, autoriser le réseau privé de confiance.
-7. Pour arrêter : bouton **Arrêter**, ou fermer la fenêtre. La réduire laisse le serveur actif.
+Le lanceur crée sa propre copie du récepteur dans `data/receiver-tii-0.4`. Il ne remplace pas une installation existante d’AbracaDABra. Le pilote USB n’est pas installé automatiquement. Voir [les instructions officielles](https://github.com/KejPi/AbracaDABra#Windows) pour une nouvelle clé.
 
-Python n'est pas nécessaire sur le PC destinataire. Conserver le dossier `_internal` à côté de l'exécutable. Aucun démarrage automatique ni modification du pare-feu n'est effectué.
+Les ports 7979 et 17979 doivent être libres. Le lanceur ne coupe pas un serveur déjà actif. Une seule application peut utiliser la clé à la fois.
 
-Les ports 7979 (interface) et 17979 (récepteur local) doivent être libres. Un serveur existant n'est jamais arrêté par ce lanceur. Une seule application peut utiliser la clé à la fois. Le démarrage est volontaire : ouvrir l'exécutable ne lance pas automatiquement la réception.
+## Mettre à jour une version portable
+
+Arrêter l’ancien lanceur, sauvegarder son dossier `data`, puis extraire le nouveau ZIP dans un nouveau dossier. Copier `data` à côté du nouvel exécutable avant de démarrer. Les favoris, multiplex, archives, logos et réglages sont conservés ; seul le chemin du récepteur est actualisé. Ne pas superposer les dossiers `_internal` de versions différentes.
+
+Pour une installation de développement hors du lanceur portable, les chemins et le démarrage peuvent être différents : ne pas déplacer ses fichiers automatiquement.
+
+## Nouveautés
+
+- TII, identification des sites, distance, direction, puissance et carte des émetteurs.
+- DAB scan unifié, historique SNR, résultats et archives des scans avec TII.
+- Informations de réception dans le lecteur, favoris et mosaïque améliorés.
+- Mode Bluetooth simplifié et compteur de navigateurs actifs.
+
+Voir [le détail des changements](UPDATES-2026-11-04.md).
+
+La base d’émetteurs n’est pas redistribuée : importer votre CSV dans les réglages, ou utiliser le cache local d’AbracaDABra s’il existe. Les TII détectés restent disponibles sans base ; les noms et positions des sites nécessitent une base compatible.
 
 ## Données et réseau
 
-Favoris, multiplex, réglages et logos choisis sont stockés dans `data`. Le ZIP initial ne contient aucune donnée de réception ni adresse personnelle. Avant de redistribuer votre copie, supprimer `data` **après arrêt** du serveur, ou partager le ZIP original intact.
+Les données personnelles sont dans `data`. Le ZIP publié ne contient aucun favori, historique, logo téléchargé ni position personnelle. Partager le ZIP original, pas votre dossier d’utilisation.
 
-L'interface est partagée : tout appareil autorisé sur le réseau peut changer la réception ou les réglages. Cette préversion ne propose pas d'authentification ni de TLS. Elle est destinée à un réseau local de confiance ; ne pas ouvrir directement le port sur Internet. L'accès extérieur avec authentification reste un chantier distinct.
+Cette préversion n’a pas d’authentification ni de TLS. Elle est destinée à un réseau local de confiance. Les navigateurs connectés partagent le même récepteur et peuvent en changer les réglages.
 
-La recherche de logos utilise Internet (RadioDNS via DNS Google, Radio Browser, sites des radios). Les images sont chargées à la demande et ne sont pas incluses dans le paquet. Les logos et marques restent la propriété de leurs titulaires.
+La recherche de logos utilise Internet ; les logos et marques restent la propriété de leurs titulaires. Les tuiles de la carte proviennent d’OpenStreetMap.
 
-## Limites de cette préversion
+## Limites et validation
 
-Version validée sur le poste de développement ; un essai complet sur un deuxième PC Windows, avec une autre clé, est encore requis avant une version publique stable. Le réglage de gain correspond au tuner RTL-SDR testé ; les autres récepteurs ne sont pas validés. Le programme n'est pas signé numériquement. Il n'inclut pas AbracaDABra ni ses pilotes : ils proviennent de l'installation choisie par l'utilisateur.
+Le récepteur a été validé localement en réception réelle. Le paquet est contrôlé pour ses DLL, imports Python, fichiers inclus et démarrage isolé du récepteur. Un essai complet sur un deuxième PC reste nécessaire avant une version stable. Le programme n’est pas signé. Les autres familles de récepteurs ne sont pas validées ; la reprise audio après appel sur iPhone reste une limite connue.
 
-## Construire depuis les sources
+## Construire
 
 Windows x64, Python 3.13 avec Tkinter :
 
@@ -39,16 +53,8 @@ python -m pip install -r requirements-build.txt
 ./build.ps1
 ```
 
-La sortie est `dist/Live-Monitor-Windows-x64.zip`. Le code du filtre et sa commande de compilation Zig sont dans `filter/README.md`. Le binaire fourni correspond à `filter/sha256.json`.
+Avant la compilation, placer le runtime de la version publiée dans `receiver-tii/runtime` (depuis `_internal/receiver-tii/runtime` du ZIP), ou le reconstruire avec les sources fournies. Les empreintes sont dans `receiver-tii/runtime-manifest.json`. La sortie est `dist/Live-Monitor-Windows-x64.zip`.
 
-## Depot et distribution
+Le paquet séparé **Receiver-TII-Sources-0.4.zip** contient le récepteur modifié, les sources des bibliothèques et les indications de compilation. Voir `receiver-tii/README-TII.md` et `THIRD-PARTY`. Les DLL restent remplaçables dans la copie locale du récepteur ; les remplacements doivent être compatibles avec son ABI.
 
-Sources : https://github.com/DABodr/abracadabra-live-monitor
-
-Telechargements : https://github.com/DABodr/abracadabra-live-monitor/releases
-
-Ne jamais publier le dossier `data`, les favoris personnels, les journaux ni la copie locale du recepteur. Les mises a jour du programme n'incluent pas ces donnees.
-
-Le code propre a ce projet n'a pas encore de licence open source attribuee. La visibilite publique du depot n'accorde pas automatiquement des droits de redistribution ou de modification. Les composants tiers conservent leurs licences respectives (voir `THIRD-PARTY`). AbracaDABra et DAB+ sont des marques appartenant a leurs titulaires ; ce projet est independant.
-
-La version 0.3 contient les ameliorations decrites dans `UPDATES-2026-10-30.md` et `UPDATES-2026-10-31.md`. La reprise audio automatique apres appel sur iPhone reste une limite connue.
+Le code propre au projet n’a pas encore de licence open source attribuée. Les composants tiers gardent leurs licences respectives. Les droits accordés par ces licences, notamment modification et débogage des bibliothèques, restent applicables.

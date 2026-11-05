@@ -8,7 +8,7 @@ import socket
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 import webbrowser
 
 ASSETS = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
@@ -21,27 +21,28 @@ def prepare():
         shutil.copy2(ASSETS / name, DATA / name)
     os.environ['LIVE_MONITOR_ROOT'] = str(DATA)
 
-def receiver_copy(exe):
-    """Only patch the exact tested distribution, never the installed files."""
-    dll = exe.parent / 'librtlsdr.dll'
-    hashes = json.loads((ASSETS / 'filter' / 'sha256.json').read_text())
-    if (hashlib.sha256(exe.read_bytes()).hexdigest() != hashes['AbracaDABra.exe']
-        or not dll.exists() or hashlib.sha256(dll.read_bytes()).hexdigest() != hashes['rtlsdr_original.dll']):
-        raise ValueError('Cette version ne correspond pas à AbracaDABra 4.3.0 Windows testé. Sélectionnez la distribution officielle 4.3.0.')
-    target = DATA / 'receiver'
-    if exe.parent.resolve() == target.resolve():
-        raise ValueError('Sélectionnez le logiciel original, pas la copie du serveur.')
-    shutil.copytree(exe.parent, target, dirs_exist_ok=True)
-    shutil.copy2(dll, target / 'rtlsdr_original.dll')
-    shutil.copy2(ASSETS / 'filter' / 'librtlsdr.dll', target / 'librtlsdr.dll')
-    return str(target / exe.name)
+def receiver_copy():
+    """Install the bundled CLI receiver once; keep data and replacement DLLs."""
+    source = ASSETS / 'receiver-tii' / 'runtime'
+    target = DATA / 'receiver-tii-0.4'
+    marker = target / '.installed'
+    if not marker.exists():
+        manifest = json.loads((ASSETS / 'receiver-tii' / 'runtime-manifest.json').read_text())
+        for name, digest in manifest.items():
+            if hashlib.sha256((source / name).read_bytes()).hexdigest() != digest:
+                raise ValueError('Paquet du recepteur incomplet ou endommage : ' + name)
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        marker.write_text('0.4\n')
+    if not (target / 'AbracaDABra.exe').is_file():
+        raise ValueError('Recepteur manquant dans ' + str(target))
+    return str(target / 'AbracaDABra.exe')
 
 def main():
     prepare()
     window = tk.Tk()
-    window.title('AbracaDABra Live Monitor — Portable 0.3')
+    window.title('AbracaDABra Live Monitor — Portable 0.4')
     window.geometry('580x340')
-    status = tk.StringVar(value='Prêt. Choisissez AbracaDABra au premier démarrage.')
+    status = tk.StringVar(value='Prêt. Le récepteur TII est inclus.')
     state = {'worker': None, 'server': None, 'module': None, 'closing': False, 'ready': threading.Event()}
     tk.Label(window, text='AbracaDABra Live Monitor', font=('Segoe UI', 18, 'bold')).pack(pady=16)
     tk.Label(window, textvariable=status, wraplength=540).pack(pady=10)
@@ -86,18 +87,11 @@ def main():
                 with socket.socket() as sock:
                     sock.bind(('127.0.0.1', port))
             config = DATA / 'config.json'
-            if not config.exists():
-                selected = filedialog.askopenfilename(title='Choisir AbracaDABra.exe (4.3.0)', filetypes=[('AbracaDABra', 'AbracaDABra.exe')])
-                if not selected:
-                    return
-                status.set('Préparation de la copie du récepteur…')
-                window.update_idletasks()
-                exe = receiver_copy(Path(selected))
-                config.write_text(json.dumps(dict(exe=exe, automatic=True, index=2, gains=[0,3.4,6.8,10.2,13.7,17.1,20.7,24,27.8,31.2,34.6,38.2,41.6,45.3,48.8,52.7]), indent=2), encoding='utf-8')
-            else:
-                cfg = json.loads(config.read_text(encoding='utf-8'))
-                cfg['exe'] = str(DATA / 'receiver' / 'AbracaDABra.exe')
-                config.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+            exe = receiver_copy()
+            cfg = json.loads(config.read_text(encoding='utf-8-sig')) if config.exists() else dict(automatic=True, index=2, gains=[0,3.4,6.8,10.2,13.7,17.1,20.7,24,27.8,31.2,34.6,38.2,41.6,45.3,48.8,52.7])
+            cfg['exe'] = exe
+            config.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+            state['ready'].clear()
             status.set('Démarrage…')
             state['worker'] = threading.Thread(target=run, daemon=True)
             state['worker'].start()
@@ -140,10 +134,16 @@ if __name__ == '__main__':
             import server
             assert server.ROOT == Path(temporary)
             assert tk.Tcl().eval('info patchlevel')
-            for name in ('index.html', 'app.js', 'style.css', 'filter/librtlsdr.dll'):
+            for name in ('index.html', 'app.js', 'style.css', 'receiver-tii/runtime/AbracaDABra.exe'):
                 assert (ASSETS / name).is_file(), name
             assert Image.new('RGBA', (32,32)).size == (32,32)
             server.log.close()
+            import subprocess
+            runtime = ASSETS / 'receiver-tii' / 'runtime'
+            env = dict(os.environ, PATH=os.environ['SystemRoot'] + '/System32', QT_QPA_PLATFORM='offscreen', QT_PLUGIN_PATH=str(runtime))
+            result = subprocess.run([str(runtime / 'AbracaDABra.exe'), '--cli', '--list-channels'], env=env, capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+            assert result.returncode == 0, result.stderr
+
         Path(sys.argv[2]).write_text('OK: runtime, Tcl, Pillow, server imports, isolated data, assets\n')
     else:
         main()

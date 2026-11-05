@@ -1,4 +1,24 @@
-AbracaDABra: Petr Kopecky, MIT; not bundled. https://github.com/KejPi/AbracaDABra
-Runtime: CPython (PSF), Tcl/Tk, Pillow (MIT-CMU), PyInstaller bootloader (GPL with distribution exception). See bundled notices.
-DAB+ artwork source: https://www.dabplus.de/ ; brand rights remain with their holders.
-Radio station logos are downloaded at runtime and not bundled.
+﻿Receiver runtime notices (Portable 0.4)
+
+AbracaDABra 4.3.0 and libdabsdr: Petr Kopecky, MIT. Modified CLI exports TII.
+https://github.com/KejPi/AbracaDABra
+Qt 6.7.3: The Qt Company and contributors, LGPLv3/GPL and third-party notices.
+FAAD2 2.11.4: GPLv2 or later. mpg123 1.33.7: LGPLv2.1. LAME 4.0: LGPL.
+RTL-SDR old-dab 0.9.7.0: GPLv2 or later. libusb 1.0.27: LGPLv2.1 or later.
+MinGW GCC 13.1 runtime: GPLv3 with GCC Runtime Library Exception.
+MinGW-w64 / winpthreads: see the individual runtime notices.
+Full license texts and embedded third-party notices are under receiver/.
+
+Receiver-TII-Sources-0.4.zip is supplied at the same release location:
+https://github.com/DABodr/abracadabra-live-monitor/releases/tag/v0.4.0
+It contains the modified receiver source, library sources and build instructions.
+Libraries are dynamically linked and may be replaced with compatible modified
+versions in data/receiver-tii-0.4. No license restriction on this project's own
+files limits the rights granted by the libraries' licenses, including reverse
+engineering for debugging modifications to those libraries.
+
+Python runtime: CPython (PSF), Tcl/Tk, Pillow (MIT-CMU), PyInstaller bootloader
+(GPL with distribution exception). See the individual bundled notices.
+Leaflet: BSD-2-Clause; see LICENSE-Leaflet.txt.
+DAB+ artwork source: https://www.dabplus.de/ ; brand rights remain with holders.
+Radio station logos and transmitter database contents are NOT bundled.

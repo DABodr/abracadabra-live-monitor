@@ -1,0 +1,66 @@
+{
+  "qtbase-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtbase/tar.gz/refs/tags/v6.7.3",
+    "sha256": "65771d1618cab08ec5e9bbfdc265b5d2ce2ccf0373143d7d9d139647a7196aec"
+  },
+  "qtdeclarative-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtdeclarative/tar.gz/refs/tags/v6.7.3",
+    "sha256": "f39fa4e7e3b4011e52fc55fbde5f41e61815bffea432869abc9b90aa4de07613"
+  },
+  "qtmultimedia-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtmultimedia/tar.gz/refs/tags/v6.7.3",
+    "sha256": "eb42e65d146950548bf92f00d4a0965280e1aac11f0045c5f9b9411bd6ebe543"
+  },
+  "qtsvg-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtsvg/tar.gz/refs/tags/v6.7.3",
+    "sha256": "2852d8f1f52b60f0624ca5edf479125e4b32d579b1177d8b76d8e28fac98a701"
+  },
+  "qtimageformats-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtimageformats/tar.gz/refs/tags/v6.7.3",
+    "sha256": "7b4f9c146dcf5cd3ff40a3680df1aaedfaa15beff3ec2fb7cb6885afe8553302"
+  },
+  "qtpositioning-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtpositioning/tar.gz/refs/tags/v6.7.3",
+    "sha256": "33e9e8dc35055a95bd5b1082365597e86dba6f0095acc89401735011bf9a620f"
+  },
+  "qtshadertools-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtshadertools/tar.gz/refs/tags/v6.7.3",
+    "sha256": "8ec6a48c41d49b6f9595659169b2c69aecd46e96a88131f19f6a4cda394fa3f4"
+  },
+  "mingw-w64-faad2-2.11.4-1.src.tar.zst": {
+    "url": "https://repo.msys2.org/mingw/sources/mingw-w64-faad2-2.11.4-1.src.tar.zst",
+    "sha256": "2a625ce3732f03d9ba5181b5ab552a854c4f488ff7a430ea98148d249a1ea527"
+  },
+  "mingw-w64-mpg123-1.33.7-1.src.tar.zst": {
+    "url": "https://repo.msys2.org/mingw/sources/mingw-w64-mpg123-1.33.7-1.src.tar.zst",
+    "sha256": "f924cfca2e6cb867e4efc2aa3935bac24593da1631bf1a8613bc35b4fae88c18"
+  },
+  "mingw-w64-lame-4.0-1.src.tar.zst": {
+    "url": "https://repo.msys2.org/mingw/sources/mingw-w64-lame-4.0-1.src.tar.zst",
+    "sha256": "d6b09455f8a6803bbf8b1e6b9c43bc64e0d9b46b6bdfe6903e40450d6e61818a"
+  },
+  "libusb-1.0.27.tar.gz": {
+    "url": "https://codeload.github.com/libusb/libusb/tar.gz/refs/tags/v1.0.27",
+    "sha256": "e8f18a7a36ecbb11fb820bd71540350d8f61bcd9db0d2e8c18a6fb80b214a3de"
+  },
+  "rtlsdr-0.9.7.0.tar.gz": {
+    "url": "https://codeload.github.com/old-dab/rtlsdr/tar.gz/refs/tags/v0.9.7.0",
+    "sha256": "60c7b98f87a5567f50dbedd6899ac40faae81984d546029eba079032ab78429e"
+  },
+  "mingw-w64-v11.0.0.tar.gz": {
+    "url": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/refs/tags/v11.0.0",
+    "sha256": "760fc2b908418060f5ccfdf9740ea9e6560f60b155d4ebb1608348fc56abf386"
+  },
+  "gcc-13.1.0.tar.gz": {
+    "url": "https://codeload.github.com/gcc-mirror/gcc/tar.gz/refs/tags/releases/gcc-13.1.0",
+    "sha256": "93ead0faffab712b2d9aee7a472a32a82edb016fa239c49e7e145118f959cd79"
+  },
+  "qtlocation-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qtlocation/tar.gz/refs/tags/v6.7.3",
+    "sha256": "7aa72ab49fd88a6d9610a72c3b6cf16bf7b47903c6f8764b7d294244312dc1df"
+  },
+  "qttools-6.7.3.tar.gz": {
+    "url": "https://codeload.github.com/qt/qttools/tar.gz/refs/tags/v6.7.3",
+    "sha256": "69ea13037677cf5a6971ebf92448ed662aa92029399687c871eb3e2ac1d7831c"
+  }
+}

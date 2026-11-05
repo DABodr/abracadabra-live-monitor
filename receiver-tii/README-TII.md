@@ -12,4 +12,4 @@ Build environment: Qt 6.7.3 MinGW, MinGW 13.1, CMake, Ninja; MSYS2 import librar
 
 Tests: database matching across channels/countries, multiple sites, invalid import preservation, missing synchronization; desktop/mobile UI with mocked detections. Native build and real RF validation passed: 5B NAM-LUX 1, TII 03-01 (Bouillon) and 03-07 (Leglise/Anlier), MP3 stream available; detections cleared on retune to 7D. Deployed locally on 2026-11-02.
 
-The standard portable ZIP 0.3 still uses the original receiver. A future portable build needs the compiled receiver and its matching runtime; this patch alone does not enable TII in that ZIP.
+Portable ZIP 0.4 includes the compiled receiver and matching runtime. The binary manifest is runtime-manifest.json. Corresponding sources and build notes are distributed as Receiver-TII-Sources-0.4.zip alongside the Windows ZIP. The runtime is for CLI use; it is not a replacement desktop GUI package.

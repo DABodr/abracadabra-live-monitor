@@ -1577,14 +1577,19 @@ body.mosaic-expanded .mosaic-group{margin-bottom:14px;padding-bottom:14px;border
 
 #view-scan:not(.scanning) .scan-stats,#view-scan:not(.scanning) #scanProgress,#view-scan #scanResults{display:none}#view-scan .scan-card .scan-actions{margin-bottom:0}#view-scan .scan-card #scanMessage{margin:0 0 8px}#view-scan .scan-card{padding:16px}
 
-.expanded-top>.connected-badge{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;margin:0 10px;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}.connected-badge svg{width:18px;height:18px}.expanded-top>span:not(.connected-badge){min-width:0}@media(max-width:400px){.expanded-top>.connected-badge{margin:0 5px}}
-
-/* Separate header slots keep the connection badge clear of the close focus ring. */
-.expanded-player .expanded-top{display:grid;grid-template-columns:30px minmax(0,1fr) max-content 44px;align-items:center;column-gap:14px;width:100%;min-width:0}
-.expanded-player .expanded-top>span:not(.connected-badge){margin:0;line-height:1.35;overflow-wrap:normal}
-.expanded-player .expanded-top>.connected-badge{margin:0;white-space:nowrap;justify-self:end}
+/* Active browser count beside the SDR reference in the main header. */
+.receiver-status{display:flex;align-items:center;gap:12px;min-width:0;max-width:100%}
+.connected-badge{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0}
+.connected-badge svg{width:18px;height:18px}
+.receiver-status .connection{min-width:0}
+.receiver-status .device-name{overflow-wrap:anywhere}
+.expanded-player .expanded-top{display:grid;grid-template-columns:30px minmax(0,1fr) 44px;align-items:center;column-gap:14px;width:100%;min-width:0}
+.expanded-player .expanded-top>span{margin:0;line-height:1.35}
 .expanded-player .expanded-top #collapsePlayer{width:44px;min-width:44px;height:44px;justify-self:end}
-@media(max-width:360px){.expanded-player .expanded-top{column-gap:10px;font-size:11px}.expanded-player .expanded-top>.connected-badge{font-size:12px}}
+@media(max-width:360px){.expanded-player .expanded-top{column-gap:10px;font-size:11px}.receiver-status{gap:8px}}
 
-.expanded-player .expanded-top{grid-template-columns:30px minmax(0,max-content) max-content minmax(44px,1fr)}
-.expanded-player .expanded-top>.connected-badge{justify-self:start}
+/* Center receiver information in the space before the header controls. */
+.header-right{flex:1;min-width:0;flex-wrap:nowrap}
+.receiver-status{flex:1;justify-content:center}
+@media(min-width:761px){.header-right{margin-left:24px}}
+@media(max-width:760px){.header-right{flex-basis:100%}}

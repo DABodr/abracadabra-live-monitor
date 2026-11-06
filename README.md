@@ -1,10 +1,10 @@
-﻿# AbracaDABra Live Monitor — Portable 0.4 (préversion)
+# AbracaDABra Live Monitor — Portable 0.4.1 (préversion)
 
 Interface web communautaire indépendante et non officielle. Cette version inclut le récepteur AbracaDABra modifié pour les TII et ses DLL compatibles. Python et une installation séparée d’AbracaDABra ne sont pas nécessaires.
 
 ## Installation Windows x64
 
-1. Télécharger **Live-Monitor-Windows-x64-0.4.zip** depuis [les versions publiées](https://github.com/DABodr/abracadabra-live-monitor/releases/tag/v0.4.0).
+1. Télécharger **Live-Monitor-Windows-x64-0.4.1.zip** depuis [les versions publiées](https://github.com/DABodr/abracadabra-live-monitor/releases/tag/v0.4.1).
 2. Extraire **tout le ZIP** dans un dossier accessible en écriture, par exemple Documents. Garder `_internal` à côté de `Live-Monitor.exe`.
 3. Brancher une clé RTL-SDR avec son pilote WinUSB déjà installé. Si elle fonctionne dans AbracaDABra, fermer celui-ci pour libérer la clé.
 4. Ouvrir `Live-Monitor.exe`, puis cliquer sur **Démarrer** et **Ouvrir l’interface**.
@@ -21,7 +21,14 @@ Arrêter l’ancien lanceur, sauvegarder son dossier `data`, puis extraire le no
 
 Pour une installation de développement hors du lanceur portable, les chemins et le démarrage peuvent être différents : ne pas déplacer ses fichiers automatiquement.
 
-## Nouveautés
+## Nouveautés 0.4.1
+
+- Le panneau des canaux reste ouvert lors de la sélection dans DAB scan.
+- Les stations sont placées après les informations et archives du scan.
+- Compteur de connexions dans l’en-tête, avec la référence SDR.
+- Date et heure du fichier des émetteurs et import CSV regroupés dans les réglages.
+
+## Fonctions incluses
 
 - TII, identification des sites, distance, direction, puissance et carte des émetteurs.
 - DAB scan unifié, historique SNR, résultats et archives des scans avec TII.
@@ -55,6 +62,6 @@ python -m pip install -r requirements-build.txt
 
 Avant la compilation, placer le runtime de la version publiée dans `receiver-tii/runtime` (depuis `_internal/receiver-tii/runtime` du ZIP), ou le reconstruire avec les sources fournies. Les empreintes sont dans `receiver-tii/runtime-manifest.json`. La sortie est `dist/Live-Monitor-Windows-x64.zip`.
 
-Le paquet séparé **Receiver-TII-Sources-0.4.zip** contient le récepteur modifié, les sources des bibliothèques et les indications de compilation. Voir `receiver-tii/README-TII.md` et `THIRD-PARTY`. Les DLL restent remplaçables dans la copie locale du récepteur ; les remplacements doivent être compatibles avec son ABI.
+Le paquet séparé [**Receiver-TII-Sources-0.4.zip**](https://github.com/DABodr/abracadabra-live-monitor/releases/download/v0.4.0/Receiver-TII-Sources-0.4.zip) contient le récepteur modifié, les sources des bibliothèques et les indications de compilation. Voir `receiver-tii/README-TII.md` et `THIRD-PARTY`. Les DLL restent remplaçables dans la copie locale du récepteur ; les remplacements doivent être compatibles avec son ABI.
 
 Le code propre au projet n’a pas encore de licence open source attribuée. Les composants tiers gardent leurs licences respectives. Les droits accordés par ces licences, notamment modification et débogage des bibliothèques, restent applicables.

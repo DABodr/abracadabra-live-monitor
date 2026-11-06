@@ -1031,7 +1031,7 @@ async function tuneManualChannel(frequency){
  if(scan.active){askScanTune(frequency);return;}
  manualDetailFrequency=frequency;
  if(Number(radio.frequencyKHz)!==frequency)await selectStation(frequency);
- setManualGrid(false);manualHistoryFetched=0;renderManual();
+ manualHistoryFetched=0;renderManual();
 }
 function renderManualDetails(){
  const panel=$('manualDetails');panel.hidden=manualDetailFrequency===null;if(panel.hidden)return;
@@ -1177,7 +1177,8 @@ function renderTii(connected=true){
   const sites=element('div','');if(d.sites?.length){if(d.sites.length>1)sites.append(element('p','muted','Plusieurs sites possibles'));for(const site of d.sites){sites.append(element('p','',siteName(site)+' · '+site.country));}}else sites.append(element('p','muted',db.available?'Aucun site correspondant dans la base.':'Base émetteurs indisponible.'));
   row.append(sites);return row;
  }));
- text('tiiDatabase',db.available?db.count+' sites indexés · '+db.source+' · '+new Date(db.updated*1000).toLocaleDateString('fr-FR'):'Aucune base disponible. Importe le fichier dab-tx-list.csv utilisé par AbracaDABra.');
+ const databaseInfo=db.available?db.count+' sites index\u00e9s \u00b7 '+db.source+' \u00b7 Fichier mis \u00e0 jour le '+new Date(db.updated*1000).toLocaleString('fr-FR'):'Aucune base disponible.';
+ text('settingsTiiDatabase',databaseInfo);
 }
 $('tiiImport').onchange=async()=>{
  const file=$('tiiImport').files[0];if(!file)return;

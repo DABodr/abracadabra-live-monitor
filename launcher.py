@@ -40,7 +40,7 @@ def receiver_copy():
 def main():
     prepare()
     window = tk.Tk()
-    window.title('AbracaDABra Live Monitor — Portable 0.4')
+    window.title('AbracaDABra Live Monitor — Portable 0.4.1')
     window.geometry('580x340')
     status = tk.StringVar(value='Prêt. Le récepteur TII est inclus.')
     state = {'worker': None, 'server': None, 'module': None, 'closing': False, 'ready': threading.Event()}

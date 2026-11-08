@@ -1593,3 +1593,16 @@ body.mosaic-expanded .mosaic-group{margin-bottom:14px;padding-bottom:14px;border
 .receiver-status{flex:1;justify-content:center}
 @media(min-width:761px){.header-right{margin-left:24px}}
 @media(max-width:760px){.header-right{flex-basis:100%}}
+
+.session-mux-snr[data-quality="unknown"]{color:#829087}.session-mux-snr[data-quality="poor"]{color:#f47777}.session-mux-snr[data-quality="fair"]{color:#edba61}.session-mux-snr[data-quality="good"]{color:#9fe17b}
+
+/* Compact scan results: keep the peak visible on narrow screens. */
+@media(max-width:760px){
+ #scanSessionMuxes,.archive-muxes{overflow-x:visible;min-width:0}
+ .session-mux-row{min-width:0;grid-template-columns:26px minmax(0,1fr) max-content;gap:4px 7px;padding:9px 10px;font-size:12px}
+ .session-mux-snr{font-size:11px;text-align:right}
+ .scan-mux-details .session-mux-name::before{margin-right:4px}
+ .session-mux-row time{grid-column:2;grid-row:2;font-size:10px;white-space:normal}
+ .session-mux-count{grid-column:3;grid-row:2;font-size:10px;color:var(--muted)}
+ .scan-tii-sites{padding:6px 10px 12px}
+}

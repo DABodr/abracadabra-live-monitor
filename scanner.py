@@ -2,6 +2,7 @@
 import copy
 import datetime
 import json
+import math
 import threading
 import time
 import uuid
@@ -10,6 +11,14 @@ from signal_history import SignalHistory
 
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def peak_snr(previous, value, timestamp):
+    result = {k: previous[k] for k in ('bestSnr', 'bestSnrAt') if k in previous}
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        if result.get('bestSnr') is None or value > result['bestSnr']:
+            result = dict(bestSnr=value, bestSnrAt=timestamp)
+    return result
 
 
 class Scanner:
@@ -91,7 +100,8 @@ class Scanner:
                 detections[key] = dict(tiiSites=list(tii_sites.values()), id=key, label=detected['label'], channel=detected['channel'],
                     frequencyKHz=detected['frequencyKHz'], snr=detected['snr'],
                     firstSeen=old.get('firstSeen', detected['lastSeen']), lastSeen=detected['lastSeen'],
-                    count=old.get('count', 0)+1)
+                    count=old.get('count', 0)+1,
+                    **peak_snr(old, state.get('scanBestSnr', detected['snr']), state.get('scanBestSnrAt', detected['lastSeen'])))
             self.persist()
         return True
 
@@ -270,6 +280,7 @@ class Scanner:
                     self.request('POST', '/api/tune', {'channel': channel['channel']})
                     started, stable_since, signature, candidate = time.monotonic(), None, None, None
                     collected_tii = {}
+                    collected_peaks = {}
                     while not self.cancelled.wait(.35):
                         state = self.request('GET', '/api/status')
                         elapsed = time.monotonic() - started
@@ -278,6 +289,10 @@ class Scanner:
                         fresh = state.get('frequencyKHz') == channel['frequencyKHz'] and state.get('syncLevel') == 2
                         if elapsed >= 2 and fresh and state.get('ensemble', {}).get('valid') and state.get('services'):
                             identity = (state['frequencyKHz'], state['ensemble'].get('ecc'), state['ensemble'].get('eid'))
+                            peak = peak_snr(collected_peaks.get(identity, {}), state.get('snr'), now())
+                            collected_peaks[identity] = peak
+                            if peak:
+                                state.update(scanBestSnr=peak['bestSnr'], scanBestSnrAt=peak['bestSnrAt'])
                             bucket = collected_tii.setdefault(identity, {})
                             levels = {(d.get('mainId'), d.get('subId')): d.get('level') for d in (state.get('tii') or {}).get('detections', [])}
                             for detection in self.resolve_transmitters(state).get('detections', []):

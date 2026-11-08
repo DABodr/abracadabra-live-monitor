@@ -427,6 +427,7 @@ registerMediaControls();
 audio.addEventListener('playing',registerMediaControls);
 
 let pendingManualFrequency=null;
+let requestedStation=null;
 async function selectFirstManualStation(){
  if(pendingManualFrequency===null||busy)return;
  if(scan.active){pendingManualFrequency=null;return;}
@@ -439,6 +440,7 @@ async function selectFirstManualStation(){
 async function selectStation(frequency, station, autoplay=true, alternatives=[]){
  if(busy||scan.active)return;
  pendingManualFrequency=null;
+ requestedStation=station?{...station,frequencyKHz:Number(frequency)}:null;
  busy=true;updateControls();cancelNetworkRecovery();wantedAudio=false;interruptedPlayback=false;recoveryPending=false;audio.pause();
  audio.removeAttribute('src');audio.load();
  text('playerStatus','Réception de la station…');
@@ -448,6 +450,7 @@ async function selectStation(frequency, station, autoplay=true, alternatives=[])
   for(let attempt=0;attempt<frequencies.length;attempt++){
    if(scan.active)throw new Error('Le scan utilise le r\u00e9cepteur.');
    frequency=frequencies[attempt];
+   if(requestedStation)requestedStation.frequencyKHz=frequency;
    if(frequencies.length>1){const channel=channels.find(c=>c.frequencyKHz===frequency)?.channel||frequency/1000+' MHz';toast('Recherche de '+station.label+' \u00b7 '+channel+' ('+(attempt+1)+'/'+frequencies.length+')');}
    try{
     await api('/receiver/select',{frequencyKHz:frequency,...(station?{sid:String(station.sid),scids:station.scids||0}:{})});
@@ -466,7 +469,7 @@ async function selectStation(frequency, station, autoplay=true, alternatives=[])
   } else {if(location.hash==='#scan')pendingManualFrequency=Number(frequency);if(location.hash!=='#scan')location.hash='listen';toast('Canal sélectionné. Les stations apparaîtront dès leur réception.');}
   loadLibrary().catch(()=>{});
  }catch(e){wantedAudio=false;toast(e.message);}
- finally{busy=false;updateControls();playerUI();}
+ finally{busy=false;renderRadio();updateControls();playerUI();}
 }
 function stationFallbackName(station){
  return String(station.labelShort||station.shortLabel||station.label||'Radio').trim()||'Radio';
@@ -504,9 +507,11 @@ function renderRadio(){
  renderTechnical();
  renderManual();
  const cur=radio.current||{}, adv=radio.advanced||{};
+ if(requestedStation&&!busy&&(scan.active||Number(radio.frequencyKHz)!==requestedStation.frequencyKHz||cur.playing&&cur.label))requestedStation=null;
+ const selectedName=requestedStation?.label||radio.lastReception?.station?.label;
  const dls=!scan.active&&cur.playing?(cur.dls||[cur.dlPlusArtist,cur.dlPlusTitle].filter(Boolean).join(' — ')):'';
  text('playerDls',dls);$('playerDls').hidden=!dls;$('playerDls').title=dls;
- text('stationName',scan.active?'Exploration en cours':cur.playing?cur.label:(radio.lastReception?.station?.label||'Choisis une station'));text('playerName',cur.playing?cur.label:scan.active?'Scan de la bande DAB':(radio.lastReception?.station?.label||'Aucune station'));
+ text('stationName',scan.active?'Exploration en cours':cur.playing?cur.label:(selectedName||'Choisis une station'));text('playerName',cur.playing?cur.label:scan.active?'Scan de la bande DAB':(selectedName||'Aucune station'));
  text('stationState',scan.active?'RECHERCHE EN COURS':cur.playing?'EN DIRECT':'RÉCEPTEUR PRÊT');
  text('stationTitle',scan.active?'Les multiplex reçus sont ajoutés à ta bibliothèque.':cur.playing?(cur.dlPlusTitle?[cur.dlPlusArtist,cur.dlPlusTitle].filter(Boolean).join(' — '):cur.dls||'Le direct, sans interruption.'):'Sélectionne une radio ou explore la bande DAB.');
  text('stationMux',!scan.active&&(radio.ensemble?.valid||radio.lastReception)?(radio.ensemble?.valid?radio.ensemble.label:radio.lastReception.ensemble.label)+' · '+(radio.channel||''):'');
@@ -524,7 +529,7 @@ function renderRadio(){
  const stationLogo=cur.playing?stationLogos[Number(cur.sid).toString(16)+'.'+(cur.scids||0)]:null;
  const slideId=cur.playing&&cur.slideVersion?radio.frequencyKHz+':'+cur.sid+':'+cur.slideVersion:'';
  const slideUrl=slideId?'/api/slideshow?v='+encodeURIComponent(slideId):'';
- const artworkOwner=cur.playing?[radio.frequencyKHz,Number(cur.sid),Number(cur.scids||0)].join(':'):'';
+ const artworkOwner=!scan.active&&Number(cur.sid)>0?[radio.frequencyKHz,Number(cur.sid),Number(cur.scids||0)].join(':'):'';
  const key=artworkOwner+'|'+(slideId||'')+'|'+(stationLogo||'');
  if(key!==slideKey||(artworkRetryAt&&Date.now()>=artworkRetryAt)){
   slideKey=key;artworkRetryAt=0;
@@ -543,7 +548,7 @@ function renderRadio(){
     if(slideKey!==key)return;
     for(const [img,placeholder] of targets){
      img.alt=(isSlide?'Diaporama de ':'Logo de ')+(cur.label||'la station');
-     img.dataset.broadcastSlide=String(isSlide);if(isSlide)img.dataset.broadcastUrl=url;else delete img.dataset.broadcastUrl;img.src=pending.src;img.hidden=false;placeholder.hidden=true;
+     img.dataset.broadcastSlide=String(isSlide);if(isSlide)img.dataset.broadcastUrl=url;else delete img.dataset.broadcastUrl;if(img.getAttribute('src')!==pending.src)img.src=pending.src;img.hidden=false;placeholder.hidden=true;
     }
     updateMediaMetadata();
    };
@@ -563,7 +568,8 @@ function renderRadio(){
    }catch{pending.onerror();}finally{clearTimeout(timeout);}
 
   };
-  if(slideUrl||stationLogo)loadArtwork(slideUrl||stationLogo,!!slideUrl);
+  const hasBroadcast=targets.some(([img])=>img.dataset.broadcastSlide==='true'&&!img.hidden);
+  if(slideUrl||(stationLogo&&!hasBroadcast))loadArtwork(slideUrl||stationLogo,!!slideUrl);
  }
  const services=scan.active?[]:(radio.services||[]);
  const signature=JSON.stringify([radio.frequencyKHz,services]);
@@ -644,8 +650,12 @@ function renderScanMuxRows(container,detections){
   const wrapper=element('details','scan-mux-details');wrapper.dataset.mux=m.id;wrapper.open=opened.has(m.id);
   const card=element('summary','session-mux-row');
   const name=element('strong','session-mux-name',m.label);name.title=m.label;
-  card.append(element('span','session-mux-channel',m.channel),name,element('strong','session-mux-snr','SNR '+number(m.snr,' dB')));
-  const date=m.lastSeen?new Date(m.lastSeen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'Date inconnue';
+  const hasPeak=typeof m.bestSnr==='number'&&Number.isFinite(m.bestSnr);
+  const snr=element('strong','session-mux-snr',hasPeak?'SNR max '+number(m.bestSnr,' dB'):'SNR max \u2014');
+  snr.dataset.quality=!hasPeak?'unknown':m.bestSnr<6?'poor':m.bestSnr<10?'fair':'good';
+  snr.title=hasPeak?'Meilleur SNR de cette session':'Maximum non enregistr\u00e9 pour cet ancien r\u00e9sultat';
+  card.append(element('span','session-mux-channel',m.channel),name,snr);
+  const date=hasPeak&&m.bestSnrAt?new Date(m.bestSnrAt).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'\u2014';
   const count=element('span','session-mux-count','× '+m.count);count.title=m.count+' détection'+(m.count>1?'s':'');count.setAttribute('aria-label',count.title);
   card.append(element('time','muted',date),count);wrapper.append(card);
   const panel=element('div','scan-tii-sites');
@@ -1195,7 +1205,14 @@ $('receiverPositionForm').onsubmit=async event=>{
 };
 
 (()=>{
- let map,group,lastKey='',bounds=[],channelKey='',fitted=false;
+ let map,group,lines,lastKey='',bounds=[],channelKey='',fitted=false;
+ const markers=new Map();
+ function updateMarker(key,point,style,content){
+  let marker=markers.get(key);
+  if(!marker){marker=L.circleMarker(point,style).addTo(group).bindPopup(content,{autoPan:false});markers.set(key,marker);}
+  else{marker.setLatLng(point).setStyle(style);marker.setPopupContent(content);}
+  return marker;
+ }
  const history=new Map();let currentIdentity='';
  const valid=s=>typeof s.latitude==='number'&&Number.isFinite(s.latitude)&&Math.abs(s.latitude)<=90&&typeof s.longitude==='number'&&Number.isFinite(s.longitude)&&Math.abs(s.longitude)<=180;
  const siteKey=s=>[s.mainId,s.subId,s.latitude,s.longitude,s.name].join('|');
@@ -1223,7 +1240,7 @@ $('receiverPositionForm').onsubmit=async event=>{
   if(location.hash!=='#map')return;
   if(!map){
    map=L.map('transmitterMap',{scrollWheelZoom:false,preferCanvas:true}).setView([48,4],5);
-   group=L.layerGroup().addTo(map);
+   group=L.layerGroup().addTo(map);lines=L.layerGroup().addTo(map);
    const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
    tiles.on('tileerror',()=>{text('mapState','Fond de carte indisponible. Les sites restent consultables ci-dessous.');});
    new ResizeObserver(()=>map.invalidateSize()).observe($('transmitterMap'));$('mapFit').onclick=fit;
@@ -1236,11 +1253,14 @@ $('receiverPositionForm').onsubmit=async event=>{
   const items=[...entries.values()].sort((a,b)=>({live:0,past:1,known:2}[a.state]-{live:0,past:1,known:2}[b.state])||(b.level??-Infinity)-(a.level??-Infinity)||a.name.localeCompare(b.name));
   const key=JSON.stringify([active,tx.supported,position,currentIdentity,items.map(({lastSeen,...s})=>s)]);
   if(key===lastKey)return;lastKey=key;
-  if(channelKey!==currentIdentity){channelKey=currentIdentity;fitted=false;}
-  group.clearLayers();bounds=[];$('mapSites').replaceChildren();
+  if(channelKey!==currentIdentity){channelKey=currentIdentity;fitted=false;group.clearLayers();markers.clear();}
+  const visibleKeys=new Set(items.map(siteKey));
+  if(position&&valid(position))visibleKeys.add('receiver');
+  for(const [id,marker] of markers)if(!visibleKeys.has(id)){group.removeLayer(marker);markers.delete(id);}
+  lines.clearLayers();bounds=[];$('mapSites').replaceChildren();
   if(position&&valid(position)){
    const point=[position.latitude,position.longitude];bounds.push(point);
-   L.circleMarker(point,{radius:9,color:'#fff',weight:2,fillColor:'#338bdf',fillOpacity:1}).addTo(group).bindPopup('Position de ton antenne');
+   updateMarker('receiver',point,{radius:9,color:'#fff',weight:2,fillColor:'#338bdf',fillOpacity:1},'Position de ton antenne');
   }
   for(const site of items){
    const primary=site.level!==undefined&&site.level===strongest;
@@ -1253,8 +1273,8 @@ $('receiverPositionForm').onsubmit=async event=>{
    if(site.state==='live'&&site.level!==undefined)popup.append(element('p','',number(site.level,' dB relatifs')));
    if(site.state==='past')popup.append(element('p','','Dernier TII d\u00e9tect\u00e9 : '+new Date(site.lastSeen).toLocaleString('fr-FR')));
    if(site.ambiguous)popup.append(element('p','','Site possible : ce TII correspond \u00e0 plusieurs \u00e9metteurs.'));
-   const marker=L.circleMarker(point,{radius:site.state==='known'?6:8,color:'#1b3026',weight:2,fillColor:color,fillOpacity:1}).addTo(group).bindPopup(popup);
-   if(site.state==='live'&&position&&valid(position))L.polyline([[position.latitude,position.longitude],point],{color,weight:1.5,opacity:.6,dashArray:site.ambiguous?'5 7':null,interactive:false}).addTo(group);
+   const marker=updateMarker(siteKey(site),point,{radius:site.state==='known'?6:8,color:'#1b3026',weight:2,fillColor:color,fillOpacity:1},popup);
+   if(site.state==='live'&&position&&valid(position))L.polyline([[position.latitude,position.longitude],point],{color,weight:1.5,opacity:.6,dashArray:site.ambiguous?'5 7':null,interactive:false}).addTo(lines);
    const button=element('button','map-site',site.name+' \u00b7 '+detail+' \u00b7 '+label+(site.ambiguous?' \u00b7 Site possible':''));
    button.style.borderLeft='4px solid '+color;button.dataset.state=site.state;
    button.type='button';button.onclick=()=>{map.setView(point,Math.max(map.getZoom(),10));marker.openPopup();$('transmitterMap').scrollIntoView({block:'nearest',behavior:'smooth'});};$('mapSites').append(button);
